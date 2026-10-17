@@ -1,0 +1,343 @@
+name: Flutter Android release (wspólny)
+
+# Wspólny workflow wydań Android dla wszystkich aplikacji „sklepu rodzinnego”.
+# Wywołanie z repozytorium aplikacji:
+#
+#   jobs:
+#     android:
+#       uses: grekot/App_storage/.github/workflows/flutter-android-release.yml@main
+#       with:
+#         asset_name: escape_room
+#         version: 1.2.0
+#         tag: v1.2.0
+#         release_name: Pokój Zagadek AI 1.2.0
+#       secrets: inherit
+#
+# Efekt: GitHub Release `tag` z plikami o stałych nazwach:
+#   <asset_name>.apk – APK release podpisany wspólnym kluczem,
+#   app.json         – metadane wydania (format grekot-app-release/1, czyta je sklep),
+#   icon.png         – ikona wyciągnięta z APK (gdy jest w PNG; sklep pokazuje ją w katalogu).
+# Z sekretem FIREBASE_SERVICE_ACCOUNT dodatkowo (etap 2-3 sklepu): zapis wersji w Firestore
+# (pole `latest` aplikacji w katalogu) i powiadomienie push FCM - skrypt tools/ci-publish z App_storage.
+#
+# Wywołujący workflow musi nadać `permissions: contents: write`.
+
+on:
+  workflow_call:
+    inputs:
+      app_dir:
+        description: 'Katalog projektu Fluttera względem katalogu głównego repo'
+        type: string
+        default: '.'
+      asset_name:
+        description: 'Stała nazwa assetu bez rozszerzenia, np. escape_room → escape_room.apk'
+        type: string
+        required: true
+      version:
+        description: 'Wersja (versionName), np. 1.2.0'
+        type: string
+        required: true
+      tag:
+        description: 'Tag release, np. v1.2.0'
+        type: string
+        required: true
+      release_name:
+        description: 'Tytuł release'
+        type: string
+        required: true
+      flutter_version:
+        type: string
+        default: '3.41.9'
+      target_abi:
+        description: "'' = APK uniwersalny; arm64 / arm / x64 = --split-per-abi tylko dla tej architektury"
+        type: string
+        default: ''
+      run_tests:
+        type: boolean
+        default: true
+      version_code_offset:
+        description: 'Dodawany do github.run_number (versionCode musi rosnąć także po przenosinach repo)'
+        type: number
+        default: 0
+      firebase_options_path:
+        description: 'Opcjonalnie: ścieżka firebase_options.dart względem katalogu głównego repo'
+        type: string
+        default: ''
+      prerelease:
+        description: 'Wersja testowa: release oznaczony pre-release, bez zapisu do Firestore i powiadomienia'
+        type: boolean
+        default: false
+    secrets:
+      KEYSTORE_BASE64:
+        required: false
+      KEYSTORE_PASSWORD:
+        required: false
+      KEY_ALIAS:
+        required: false
+      KEY_PASSWORD:
+        required: false
+      FIREBASE_OPTIONS_DART_B64:
+        required: false
+      FIREBASE_SERVICE_ACCOUNT:
+        description: 'JSON konta usługi Firebase (zapis wersji do Firestore + powiadomienie FCM)'
+        required: false
+    outputs:
+      version_code:
+        description: 'versionCode z gotowego APK (przy split-per-abi Flutter dodaje 1000 × kod ABI)'
+        value: ${{ jobs.android.outputs.version_code }}
+      sha256:
+        description: 'SHA-256 pliku APK (hex, małe litery)'
+        value: ${{ jobs.android.outputs.sha256 }}
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.app_dir }}
+    outputs:
+      version_code: ${{ steps.meta.outputs.version_code }}
+      sha256: ${{ steps.meta.outputs.sha256 }}
+    env:
+      VERSION: ${{ inputs.version }}
+      ASSET_NAME: ${{ inputs.asset_name }}
+      TARGET_ABI: ${{ inputs.target_abi }}
+      BUILD_NUMBER: ${{ github.run_number }}
+      VERSION_CODE_OFFSET: ${{ inputs.version_code_offset }}
+      DIST: ${{ github.workspace }}/dist
+      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+      HAS_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sprawdzenie wejść
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Wersja '$VERSION' nie wygląda na X.Y.Z"
+            exit 1
+          fi
+          if ! [[ "$ASSET_NAME" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::asset_name '$ASSET_NAME' – dozwolone litery, cyfry, _ . -"
+            exit 1
+          fi
+          case "$TARGET_ABI" in
+            ''|arm64|arm|x64) ;;
+            *) echo "::error::target_abi '$TARGET_ABI' – dozwolone: '', arm64, arm, x64"; exit 1 ;;
+          esac
+          test -f pubspec.yaml || { echo "::error::Brak pubspec.yaml w '${{ inputs.app_dir }}'"; exit 1; }
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ inputs.flutter_version }}
+          channel: stable
+          cache: true
+
+      - name: Konfiguracja Firebase (firebase_options.dart)
+        if: inputs.firebase_options_path != ''
+        working-directory: ${{ github.workspace }}
+        env:
+          FIREBASE_OPTIONS_DART_B64: ${{ secrets.FIREBASE_OPTIONS_DART_B64 }}
+          OPTIONS_PATH: ${{ inputs.firebase_options_path }}
+        run: |
+          mkdir -p "$(dirname "$OPTIONS_PATH")"
+          if [ -n "$FIREBASE_OPTIONS_DART_B64" ]; then
+            printf '%s' "$FIREBASE_OPTIONS_DART_B64" | tr -d ' \r\n' | base64 -d > "$OPTIONS_PATH"
+            echo "firebase_options.dart odtworzony z sekretu FIREBASE_OPTIONS_DART_B64"
+          elif [ -f "$OPTIONS_PATH" ]; then
+            echo "::notice::Brak sekretu FIREBASE_OPTIONS_DART_B64 – używam pliku $OPTIONS_PATH z repozytorium"
+          else
+            cat > "$OPTIONS_PATH" <<'DART'
+          // Zaślepka wygenerowana przez CI: brak sekretu FIREBASE_OPTIONS_DART_B64.
+          import 'package:firebase_core/firebase_core.dart';
+
+          const bool firebaseConfigured = false;
+
+          const FirebaseOptions firebaseOptions = FirebaseOptions(
+            apiKey: '',
+            appId: '',
+            messagingSenderId: '',
+            projectId: '',
+          );
+          DART
+            echo "::warning::Brak sekretu FIREBASE_OPTIONS_DART_B64 – APK zbudowane z zaślepką firebase_options.dart (firebaseConfigured = false), logowanie nie zadziała"
+          fi
+
+      - run: flutter pub get
+
+      - name: Pamięć JVM Gradle (runner nie ma ~/.gradle/gradle.properties)
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" >> ~/.gradle/gradle.properties
+
+      - name: Podpis release (key.properties)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ "$HAS_KEYSTORE" != 'true' ]; then
+            echo "::warning::Brak sekretu KEYSTORE_BASE64 – APK podpisany kluczem DEBUG runnera. Sklep i aktualizacja w miejscu go odrzucą."
+            exit 0
+          fi
+          for v in KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then echo "::error::Jest KEYSTORE_BASE64, ale brak sekretu $v"; exit 1; fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | tr -d ' \r\n' | base64 -d > android/upload-keystore.jks
+          {
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyPassword=$KEY_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "storeFile=$PWD/android/upload-keystore.jks"
+          } > android/key.properties
+
+      - name: Analiza
+        run: flutter analyze --no-fatal-infos
+
+      - name: Testy
+        if: inputs.run_tests
+        run: |
+          if [ -d test ]; then
+            flutter test
+          else
+            echo "Brak katalogu test/ – pomijam"
+          fi
+
+      - name: Build APK
+        run: |
+          BUILD_CODE=$((BUILD_NUMBER + VERSION_CODE_OFFSET))
+          ARGS=(--release --build-name="$VERSION" --build-number="$BUILD_CODE" --dart-define=APP_VERSION="$VERSION")
+          case "$TARGET_ABI" in
+            '')    OUT=app-release.apk ;;
+            arm64) ARGS+=(--split-per-abi --target-platform android-arm64); OUT=app-arm64-v8a-release.apk ;;
+            arm)   ARGS+=(--split-per-abi --target-platform android-arm);   OUT=app-armeabi-v7a-release.apk ;;
+            x64)   ARGS+=(--split-per-abi --target-platform android-x64);   OUT=app-x86_64-release.apk ;;
+          esac
+          flutter build apk "${ARGS[@]}"
+          mkdir -p "$DIST"
+          cp "build/app/outputs/flutter-apk/$OUT" "$DIST/$ASSET_NAME.apk"
+          rm -f android/key.properties android/upload-keystore.jks
+
+      - name: Metadane app.json
+        id: meta
+        env:
+          TAG: ${{ inputs.tag }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
+          APK="$DIST/$ASSET_NAME.apk"
+          "$BT/aapt2" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
+          "$BT/apksigner" verify --print-certs "$APK" > "$RUNNER_TEMP/certs.txt"
+          case "$TARGET_ABI" in
+            '') ABI=universal ;; arm64) ABI=arm64-v8a ;; arm) ABI=armeabi-v7a ;; x64) ABI=x86_64 ;;
+          esac
+          export APK ABI
+          export PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python3 - "$RUNNER_TEMP/badging.txt" "$RUNNER_TEMP/certs.txt" "$DIST/app.json" <<'PY'
+          import hashlib, json, os, re, sys
+
+          badging = open(sys.argv[1], encoding="utf-8").read()
+          certs = open(sys.argv[2], encoding="utf-8").read()
+
+          def find(pattern, text, what):
+              m = re.search(pattern, text, re.M)
+              if not m:
+                  sys.exit(f"::error::Nie znaleziono {what} w wyniku aapt2/apksigner")
+              return m.group(1)
+
+          apk = os.environ["APK"]
+          digest = hashlib.sha256()
+          with open(apk, "rb") as f:
+              for chunk in iter(lambda: f.read(1 << 20), b""):
+                  digest.update(chunk)
+
+          data = {
+              "schema": "grekot-app-release/1",
+              "packageName": find(r"^package: name='([^']+)'", badging, "packageName"),
+              "versionName": find(r"^package: .*versionName='([^']*)'", badging, "versionName"),
+              "versionCode": int(find(r"^package: .*versionCode='(\d+)'", badging, "versionCode")),
+              "minSdk": int(find(r"^(?:min)?[sS]dkVersion:'(\d+)'", badging, "minSdk")),
+              "targetSdk": int(find(r"^targetSdkVersion:'(\d+)'", badging, "targetSdk")),
+              "assetName": os.path.basename(apk),
+              "size": os.path.getsize(apk),
+              "sha256": digest.hexdigest(),
+              "signerSha256": find(r"^Signer #1 certificate SHA-256 digest: ([0-9a-fA-F:]+)", certs, "signerSha256").replace(":", "").lower(),
+              "abi": os.environ["ABI"],
+              "tag": os.environ["TAG"],
+              "commit": os.environ["COMMIT"],
+              "publishedAt": os.environ["PUBLISHED_AT"],
+          }
+          if data["versionName"] != os.environ["VERSION"]:
+              sys.exit(f"::error::versionName w APK ({data['versionName']}) różni się od wersji {os.environ['VERSION']}")
+          with open(sys.argv[3], "w", encoding="utf-8") as f:
+              json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"version_code={data['versionCode']}\nsha256={data['sha256']}\n")
+          print(json.dumps(data, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Ikona z APK (icon.png)
+        run: |
+          # Najwyższa gęstość ikony z aapt2; ikony adaptacyjne (XML) pomijamy - sklep pokaże literę.
+          ICON=$(grep -oP "^application-icon-\d+:'\K[^']+" "$RUNNER_TEMP/badging.txt" | grep -i '\.png$' | tail -n1 || true)
+          if [ -n "$ICON" ] && unzip -p "$DIST/$ASSET_NAME.apk" "$ICON" > "$DIST/icon.png" 2>/dev/null && [ -s "$DIST/icon.png" ]; then
+            echo "Ikona: $ICON"
+          else
+            rm -f "$DIST/icon.png"
+            echo "::notice::Brak ikony PNG w APK - wydanie bez icon.png"
+          fi
+
+      - name: Publikacja GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            dist/${{ inputs.asset_name }}.apk
+            dist/app.json
+            dist/icon.png
+
+      # ---- Etap 2-3 sklepu: wersja do Firestore + powiadomienie (tylko z sekretem) ----
+      - name: Skrypt publikacji ze sklepu
+        if: env.HAS_SERVICE_ACCOUNT == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: grekot/App_storage
+          path: _sklep
+          sparse-checkout: tools/ci-publish
+
+      - uses: actions/setup-node@v4
+        if: env.HAS_SERVICE_ACCOUNT == 'true'
+        with:
+          node-version: '22'
+
+      - name: Zapis wersji w Firestore i powiadomienie
+        if: env.HAS_SERVICE_ACCOUNT == 'true'
+        working-directory: ${{ github.workspace }}/_sklep/tools/ci-publish
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          APP_NAME: ${{ inputs.release_name }}
+        run: |
+          npm ci --no-audit --no-fund
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body > "$RUNNER_TEMP/notes.md" || true
+          export APP_JSON="$DIST/app.json" RELEASE_NOTES_FILE="$RUNNER_TEMP/notes.md"
+          export APK_URL="$BASE/download/$TAG/$ASSET_NAME.apk" RELEASE_URL="$BASE/tag/$TAG"
+          if [ -f "$DIST/icon.png" ]; then export ICON_URL="$BASE/download/$TAG/icon.png"; fi
+          node publish.mjs

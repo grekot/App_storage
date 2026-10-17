@@ -1,0 +1,14 @@
+{
+  "name": "sklep-firestore-rules-test",
+  "private": true,
+  "type": "module",
+  "description": "Testy reguł Firestore (Zakupy + Powrót + Sklep) na emulatorze",
+  "scripts": {
+    "test": "firebase --config ../firebase.json emulators:exec --project demo-sklep --only firestore \"node --test rules.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.0.0",
+    "firebase-tools": "^13.35.1"
+  }
+}

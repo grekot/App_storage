@@ -1,0 +1,72 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Instalowanie pobranych APK przez PackageInstaller (zgoda "Instaluj nieznane aplikacje"). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- Android 12+: aktualizacja bez dialogu systemowego aplikacji, które zainstalował sklep
+         (system sam decyduje; gdy warunki nie są spełnione, i tak pokaże potwierdzenie). -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"/>
+    <!-- Odinstalowanie z poziomu sklepu (systemowe okno potwierdzenia). -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES"/>
+    <!-- Android 13+: powiadomienia o nowych wersjach (FCM). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <application
+        android:label="Sklep rodzinny"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- Linki do sklepu z innych aplikacji i z kodów QR:
+                 grekot-sklep://app/<packageName>   - karta aplikacji
+                 grekot-sklep://join/<kod>          - dołączenie do grupy zaproszeniem -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="grekot-sklep"/>
+            </intent-filter>
+        </activity>
+
+        <!-- Wynik sesji PackageInstaller (prośba o potwierdzenie, sukces, błąd). -->
+        <receiver
+            android:name=".InstallResultReceiver"
+            android:exported="false"/>
+
+        <!-- Domyślny kanał powiadomień FCM. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="nowe_wersje"/>
+
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Widoczność zainstalowanych aplikacji z ikoną (Android 11+): sklep odczytuje
+             ich wersję i podpis, żeby wiedzieć, co zaktualizować. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+        </intent>
+    </queries>
+</manifest>

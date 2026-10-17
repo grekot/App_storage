@@ -1,0 +1,17 @@
+# Konfiguracja Firebase z kluczem API - nie publikować (generuje tools/configure.mjs)
+app/android/app/google-services.json
+app/lib/firebase_options.dart
+# Lokalne nadpisanie ścieżki do pakietu wspolne
+app/pubspec_overrides.yaml
+# Podpis
+**/key.properties
+*.jks
+*.keystore
+# Konto usługi Firebase dla CI - tylko w sekretach GitHub
+**/service-account*.json
+node_modules/
+*.apk
+# Logi emulatora Firebase
+*.log
+# Kotlin daemon
+.kotlin/

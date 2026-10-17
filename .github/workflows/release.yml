@@ -1,0 +1,49 @@
+name: Wydanie sklepu
+
+# Tag vX.Y.Z (albo ręczne uruchomienie z numerem wersji) buduje podpisany APK sklepu
+# wspólnym workflow i publikuje go jako GitHub Release (sklep.apk + app.json).
+# Stały link do strony startowej: releases/latest/download/sklep.apk
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Wersja wydania, np. 1.2.0 (tag v1.2.0 zostanie utworzony)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+  android:
+    needs: meta
+    uses: ./.github/workflows/flutter-android-release.yml
+    with:
+      app_dir: app
+      asset_name: sklep
+      version: ${{ needs.meta.outputs.version }}
+      tag: v${{ needs.meta.outputs.version }}
+      release_name: Sklep rodzinny ${{ needs.meta.outputs.version }}
+      firebase_options_path: app/lib/firebase_options.dart
+    secrets:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      FIREBASE_OPTIONS_DART_B64: ${{ secrets.FIREBASE_OPTIONS_SKLEP_B64 }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}

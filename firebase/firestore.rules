@@ -1,0 +1,214 @@
+rules_version = '2';
+
+// PEŁNE reguły projektu Firebase zakupy-8ec54 = Zakupy + Powrót + Sklep rodzinny.
+// Firestore ma jeden zestaw reguł na bazę: publikuj TEN plik (zastępuje T_rex_3/lista-zakupow/firebase/firestore.rules).
+// Testy: firebase/test (npm test - emulator).
+//
+// Sklep rodzinny:
+//   groups/{gid}                     name, ownerId, members[], memberEmails{uid: e-mail}, trustedSigners[], lastInvite
+//   groups/{gid}/apps/{appId}        aplikacja w katalogu grupy (+ latest - zapisuje CI kontem usługi)
+//   groups/{gid}/installs/{uid_pkg}  kto ma którą wersję
+//   invites/{kod}                    groupId, groupName, createdBy, expiresAt
+//
+
+// Lista zakupów:
+//   lists/{listId}                 listy (members = uid osób z dostępem, ownerId = właściciel)
+//   lists/{listId}/items/{itemId}  produkty
+//   emails/{email}                 e-mail -> uid (do dodawania znajomych po e-mailu)
+//   users/{uid}/friends/{uid}      znajomi danej osoby
+//   places/{placeId}               zapisane miejsca z aplikacji Powrót (np. gdzie stoi auto)
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isMember(listId) {
+      return signedIn()
+        && request.auth.uid in get(/databases/$(database)/documents/lists/$(listId)).data.members;
+    }
+
+    function validName(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 100;
+    }
+
+    function validPlace(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 40
+        && data.lat is number && data.lat >= -90 && data.lat <= 90
+        && data.lon is number && data.lon >= -180 && data.lon <= 180;
+    }
+
+    // Zmiana osób z dostępem - te same zasady dla list i miejsc:
+    //  - właściciel może wszystko (także usuwać osoby), ale nie może zniknąć z dokumentu,
+    //  - pozostali mogą tylko dopisywać osoby albo usunąć samych siebie (opuścić).
+    function validMembersChange() {
+      return request.auth.uid in resource.data.members
+        && request.resource.data.ownerId == resource.data.ownerId
+        && resource.data.ownerId in request.resource.data.members
+        && (
+          request.auth.uid == resource.data.ownerId
+          || request.resource.data.members.hasAll(resource.data.members)
+          || request.resource.data.members.toSet()
+               == resource.data.members.toSet().difference([request.auth.uid].toSet())
+        );
+    }
+
+    match /places/{placeId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.auth.uid in request.resource.data.members
+        && validPlace(request.resource.data);
+      allow update: if signedIn() && validMembersChange() && validPlace(request.resource.data);
+      allow delete: if signedIn() && request.auth.uid == resource.data.ownerId;
+    }
+
+    // Książka adresowa: można odczytać tylko pojedynczy wpis znając dokładny e-mail
+    // (bez przeglądania listy kont). Każdy zapisuje wyłącznie własny e-mail.
+    match /emails/{email} {
+      allow get: if signedIn();
+      allow create, update: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && email == request.auth.token.email.lower();
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Znajomi - widzi i zmienia tylko właściciel
+    match /users/{uid}/friends/{friendUid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /lists/{listId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.auth.uid in request.resource.data.members
+        && validName(request.resource.data);
+
+      // Zmiany listy (nazwa, udostępnianie):
+      //  - właściciel może wszystko (także usuwać osoby), ale nie może zniknąć z listy,
+      //  - pozostali mogą tylko dopisywać osoby albo usunąć z listy samych siebie (opuścić ją).
+      allow update: if signedIn() && validMembersChange() && validName(request.resource.data);
+
+      allow delete: if signedIn() && request.auth.uid == resource.data.ownerId;
+
+      match /items/{itemId} {
+        allow read, delete: if isMember(listId);
+        allow create, update: if isMember(listId)
+          && validName(request.resource.data)
+          && request.resource.data.checked is bool;
+      }
+    }
+  
+
+    // ================================================================ Sklep rodzinny
+
+    function groupData(gid) {
+      return get(/databases/$(database)/documents/groups/$(gid)).data;
+    }
+
+    function isGroupMember(gid) {
+      return signedIn() && request.auth.uid in groupData(gid).members;
+    }
+
+    function isGroupOwner(gid) {
+      return signedIn() && groupData(gid).ownerId == request.auth.uid;
+    }
+
+    function changedOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    function validGroup(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 60
+        && data.members is list && data.members.size() <= 100
+        && data.memberEmails is map
+        && data.ownerId in data.members;
+    }
+
+    // Właściciel zmienia wszystko poza właścicielem (i nie może zniknąć z grupy - validGroup).
+    function ownerEdits() {
+      return request.auth.uid == resource.data.ownerId
+        && request.resource.data.ownerId == resource.data.ownerId;
+    }
+
+    // Członek (nie właściciel) wypisuje się sam.
+    function memberLeaves() {
+      return request.auth.uid != resource.data.ownerId
+        && changedOnly(['members', 'memberEmails', 'updatedAt'])
+        && request.resource.data.members.toSet()
+             == resource.data.members.toSet().difference([request.auth.uid].toSet())
+        && !(request.auth.uid in request.resource.data.memberEmails);
+    }
+
+    // Nowa osoba dopisuje się sama ważnym kodem zaproszenia do tej grupy
+    // (kod podaje w polu lastInvite, reguła sprawdza dokument invites/{kod}).
+    function joinsWithInvite(gid) {
+      let code = request.resource.data.lastInvite;
+      let inv = get(/databases/$(database)/documents/invites/$(code)).data;
+      return code is string
+        && inv.groupId == gid
+        && inv.expiresAt > request.time
+        && changedOnly(['members', 'memberEmails', 'updatedAt', 'lastInvite'])
+        && !(request.auth.uid in resource.data.members)
+        && request.resource.data.members.toSet()
+             == resource.data.members.toSet().union([request.auth.uid].toSet())
+        && request.resource.data.memberEmails.diff(resource.data.memberEmails).affectedKeys()
+             .hasOnly([request.auth.uid])
+        && request.resource.data.memberEmails[request.auth.uid] == request.auth.token.email.lower();
+    }
+
+    function validApp(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 60
+        && data.packageName is string && data.packageName.matches('^[A-Za-z][A-Za-z0-9_]*([.][A-Za-z][A-Za-z0-9_]*)+$')
+        && data.repo is string && data.repo.matches('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$');
+    }
+
+    match /groups/{gid} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.members == [request.auth.uid]
+        && validGroup(request.resource.data);
+
+      allow update: if signedIn() && validGroup(request.resource.data)
+        && (ownerEdits() || memberLeaves() || joinsWithInvite(gid));
+
+      allow delete: if signedIn() && request.auth.uid == resource.data.ownerId;
+
+      match /apps/{appId} {
+        allow read: if isGroupMember(gid);
+        allow create, update: if isGroupOwner(gid) && validApp(request.resource.data);
+        allow delete: if isGroupOwner(gid);
+      }
+
+      match /installs/{installId} {
+        allow read: if isGroupOwner(gid)
+          || (signedIn() && resource.data.uid == request.auth.uid);
+        allow create, update: if isGroupMember(gid)
+          && request.resource.data.uid == request.auth.uid
+          && installId == request.auth.uid + '_' + request.resource.data.packageName;
+        allow delete: if signedIn()
+          && (resource.data.uid == request.auth.uid || isGroupOwner(gid));
+      }
+    }
+
+    // Zaproszenia: odczyt pojedynczego kodu każdy zalogowany (trzeba znać kod),
+    // lista tylko własnych; tworzy właściciel grupy, ważność najwyżej 31 dni.
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow list: if signedIn() && resource.data.createdBy == request.auth.uid;
+      allow create: if signedIn()
+        && code.size() >= 6 && code.size() <= 16
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.groupId is string
+        && isGroupOwner(request.resource.data.groupId)
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt < request.time + duration.value(31, 'd');
+      allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+    }
+  }
+}

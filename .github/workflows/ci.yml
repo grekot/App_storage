@@ -1,0 +1,68 @@
+name: CI
+
+# Każdy push / PR: analiza i testy aplikacji sklepu, testy reguł Firestore na emulatorze
+# i testy skryptu publikacji wersji.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+      - name: Zaślepka konfiguracji Firebase (prawdziwa jest poza gitem)
+        run: |
+          cat > lib/firebase_options.dart <<'EOF'
+          import 'package:firebase_core/firebase_core.dart';
+          const bool firebaseConfigured = false;
+          const FirebaseOptions firebaseOptions = FirebaseOptions(apiKey: '', appId: '', messagingSenderId: '', projectId: '');
+          EOF
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+
+  rules:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firebase/test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: firebase/test/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  ci-publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/ci-publish
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm test
