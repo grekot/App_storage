@@ -198,6 +198,10 @@ jobs:
             echo "keyAlias=$KEY_ALIAS"
             echo "storeFile=$PWD/android/upload-keystore.jks"
           } > android/key.properties
+          # Odcisk certyfikatu klucza (SHA-256 z DER) - zapas, gdyby apksigner zmienił format wyjścia.
+          SIGNER=$(keytool -exportcert -keystore android/upload-keystore.jks -alias "$KEY_ALIAS"             -storepass "$KEYSTORE_PASSWORD" | sha256sum | cut -d' ' -f1)
+          echo "KEYSTORE_SIGNER=$SIGNER" >> "$GITHUB_ENV"
+          echo "Odcisk klucza podpisu: $SIGNER"
 
       - name: Analiza
         run: flutter analyze --no-fatal-infos
@@ -254,6 +258,19 @@ jobs:
                   sys.exit(f"::error::Nie znaleziono {what} w wyniku aapt2/apksigner")
               return m.group(1)
 
+          def signer_sha256():
+              # "Signer #1 certificate SHA-256 digest: …" albo w nowszym apksigner
+              # "Signer (minSdkVersion=…, maxSdkVersion=…) certificate SHA-256 digest: …"
+              m = re.search(r"certificate SHA-256 digest: ?([0-9a-fA-F:]{64,95})", certs)
+              if m:
+                  return m.group(1).replace(":", "").lower()
+              print("::warning::Nieznany format apksigner: " + repr(certs[:600]))
+              fallback = os.environ.get("KEYSTORE_SIGNER", "")
+              if re.fullmatch(r"[0-9a-f]{64}", fallback):
+                  print("::notice::signerSha256 wzięty z certyfikatu klucza podpisu")
+                  return fallback
+              sys.exit("::error::Nie znaleziono signerSha256 w wyniku apksigner")
+
           apk = os.environ["APK"]
           digest = hashlib.sha256()
           with open(apk, "rb") as f:
@@ -270,9 +287,7 @@ jobs:
               "assetName": os.path.basename(apk),
               "size": os.path.getsize(apk),
               "sha256": digest.hexdigest(),
-              # "Signer #1 certificate SHA-256 digest: …" albo w nowszym apksigner
-              # "Signer (minSdkVersion=24, maxSdkVersion=…) certificate SHA-256 digest: …"
-              "signerSha256": find(r"^Signer.*?certificate SHA-256 digest: ([0-9a-fA-F:]+)", certs, "signerSha256").replace(":", "").lower(),
+              "signerSha256": signer_sha256(),
               "abi": os.environ["ABI"],
               "tag": os.environ["TAG"],
               "commit": os.environ["COMMIT"],
