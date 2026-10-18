@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ikona Sklepu rodzinnego: domek ze strzałką "pobierz" (strzałka wycięta - widać tło).
+     Siatka 108 dp ikony adaptacyjnej, treść w bezpiecznym obszarze 66 dp. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M54,30 L80,53 L74,53 L74,79 L34,79 L34,53 L28,53 Z M51,50 L57,50 L57,62 L63,62 L54,72 L45,62 L51,62 Z" />
+</vector>
