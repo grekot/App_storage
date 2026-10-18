@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildLatest, buildMessage, topicFor } from "./publish.mjs";
+import { buildCatalogEntry, buildLatest, buildMessage, topicFor } from "./publish.mjs";
 
 const appJson = {
   schema: "grekot-app-release/1",
@@ -37,6 +37,17 @@ test("pole latest ma klucze AppRelease", () => {
 test("odrzuca obcy format", () => {
   assert.throws(() => buildLatest({ ...appJson, schema: "x" }, { apkUrl: "" }));
   assert.throws(() => buildLatest({ ...appJson, versionCode: undefined }, { apkUrl: "" }));
+});
+
+test("automatyczny wpis katalogu", () => {
+  const e = buildCatalogEntry({ ...appJson, appName: "Zakupy" }, "grekot/T_rex_3");
+  assert.equal(e.name, "Zakupy");
+  assert.equal(e.tagPrefix, "zakupy-v");
+  assert.equal(e.assetName, "zakupy");
+  assert.equal(e.repo, "grekot/T_rex_3");
+  const v = buildCatalogEntry({ ...appJson, tag: "v2.0.0", versionName: "2.0.0", appName: "" }, "grekot/X", "Fallback");
+  assert.equal(v.tagPrefix, "v");
+  assert.equal(v.name, "Fallback");
 });
 
 test("wiadomość FCM", () => {

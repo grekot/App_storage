@@ -51,6 +51,8 @@ class StoreRepository {
       'members': [uid],
       'memberEmails': {uid: emailKey(email)},
       'trustedSigners': <String>[],
+      // Nowe aplikacje dopisują się same przy pierwszym wydaniu (tools/ci-publish).
+      'autoAdd': true,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });

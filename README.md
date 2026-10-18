@@ -40,6 +40,31 @@ Plan i decyzje: [PROJEKT.md](PROJEKT.md).
 - **Linki**: `grekot-sklep://app/<pakiet>` otwiera kartę aplikacji (przycisk „W Sklepie”
   w EscapeRoom i GPS RTK), `grekot-sklep://join/<kod>` dołącza do grupy.
 
+## Zarządzanie z komputera: polecenie `sklep`
+
+W folderze `App_storage` (Windows: `sklep.cmd`, wszędzie: `node tools/sklep-cli/sklep.mjs`):
+
+```bash
+sklep login
+```
+
+Logowanie jest jednorazowe, kontem z Zakupów. Sesja leży w `%APPDATA%\sklep-rodzinny\sesja.json`,
+hasło nie jest zapisywane. Polecenie działa przez te same reguły Firestore co telefon.
+
+| Polecenie | Co robi |
+|---|---|
+| `sklep status` | grupy, aplikacje, wersje |
+| `sklep dodaj grekot/EscapeRoom` | dodaje aplikację; pakiet, nazwę i plik odczytuje z ostatniego wydania |
+| `sklep dodaj grekot/T_rex_3 --prefiks zakupy-v` | to samo dla repozytorium z kilkoma aplikacjami |
+| `sklep ustaw zakupy --opis "…" --kolejnosc 1` | zmiana nazwy, opisu, kolejności, ikony, bety, ukrycia |
+| `sklep zaproszenie` | kod zaproszenia i gotowa wiadomość dla rodziny |
+| `sklep wersje` | kto ma którą wersję |
+| `sklep pomoc` | wszystkie polecenia |
+
+**Nowe aplikacje dodają się same.** Grupa ma włączone `autoAdd` (`sklep auto tak`), więc pierwsze
+wydanie nowej aplikacji przez wspólny workflow dopisuje ją do katalogu z nazwą z APK.
+Ręcznie trzeba dodać tylko aplikacje wydane, zanim grupa istniała.
+
 ## Budowanie
 
 Wymagania jak w innych projektach: Flutter 3.41, JDK 17, Android SDK.

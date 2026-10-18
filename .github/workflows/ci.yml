@@ -66,3 +66,6 @@ jobs:
           node-version: '22'
       - run: npm ci
       - run: npm test
+      - name: Testy polecenia sklep (CLI)
+        working-directory: tools/sklep-cli
+        run: node --test lib.test.mjs

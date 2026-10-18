@@ -280,6 +280,8 @@ jobs:
           data = {
               "schema": "grekot-app-release/1",
               "packageName": find(r"^package: name='([^']+)'", badging, "packageName"),
+              # Nazwa widoczna pod ikoną - sklep używa jej przy automatycznym dodawaniu do katalogu
+              "appName": (re.search(r"^application-label:'([^']*)'", badging, re.M) or [None, ""])[1],
               "versionName": find(r"^package: .*versionName='([^']*)'", badging, "versionName"),
               "versionCode": int(find(r"^package: .*versionCode='(\d+)'", badging, "versionCode")),
               "minSdk": int(find(r"^(?:min)?[sS]dkVersion:'(\d+)'", badging, "minSdk")),

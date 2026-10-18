@@ -12,6 +12,10 @@
 //   ICON_URL                  (opcjonalnie) link do icon.png w wydaniu
 //   PRERELEASE                "true" = wersja testowa: bez zapisu `latest`, bez powiadomienia
 //   APP_NAME                  (opcjonalnie) nazwa do powiadomienia, gdy pakietu nie ma w żadnej grupie
+//   GITHUB_REPOSITORY         repozytorium wydania (ustawia GitHub Actions) - do automatycznego dodania
+//
+// Automatyczne dodawanie: grupy z polem autoAdd == true, w których tej aplikacji jeszcze nie ma,
+// dostają ją od razu z nazwą z APK (app.json → appName). Sam sklep nie trafia do katalogu.
 //   DRY_RUN                   "true" = tylko wypisz, co by zrobił
 import { readFileSync, existsSync } from "node:fs";
 
@@ -41,6 +45,26 @@ export function buildLatest(appJson, { apkUrl, releaseUrl, notes = "", iconUrl =
     prerelease: false,
     iconUrl,
     appJsonUrl: null,
+  };
+}
+
+export const SELF_PACKAGE = "pl.grekot.sklep";
+
+/** Nowy wpis katalogu dla aplikacji wydanej pierwszy raz (pola jak StoreApp.toEditableJson w sklepie). */
+export function buildCatalogEntry(appJson, repo, fallbackName = "") {
+  const tag = appJson.tag, ver = appJson.versionName;
+  const prefix = tag.endsWith(ver) && tag.length > ver.length ? tag.slice(0, tag.length - ver.length) : "v";
+  return {
+    name: (appJson.appName || fallbackName || appJson.packageName).slice(0, 60),
+    description: "",
+    packageName: appJson.packageName,
+    repo,
+    tagPrefix: prefix,
+    assetName: String(appJson.assetName ?? "").replace(/\.apk$/i, ""),
+    iconUrl: "",
+    order: 100,
+    prerelease: false,
+    hidden: false,
   };
 }
 
@@ -104,6 +128,25 @@ async function main() {
     }
   }
   console.log(`Zapisano wersję ${latest.versionName} (${latest.versionCode}) w ${updated} wpisach katalogu.`);
+
+  // Pierwsze wydanie nowej aplikacji: dopisz ją do grup z włączonym autoAdd.
+  if (latest.packageName !== SELF_PACKAGE && env.GITHUB_REPOSITORY) {
+    for (const g of groups.docs.filter((d) => d.get("autoAdd") === true)) {
+      const has = await g.ref.collection("apps").where("packageName", "==", latest.packageName).limit(1).get();
+      if (!has.empty) continue;
+      const entry = buildCatalogEntry(appJson, env.GITHUB_REPOSITORY, env.APP_NAME);
+      appName = entry.name;
+      const data = {
+        ...entry,
+        latest: { ...latest, publishedAt: Timestamp.fromDate(new Date(latest.publishedAt)) },
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      };
+      if (env.DRY_RUN === "true") console.log("DRY_RUN nowa aplikacja", g.id, data);
+      else await g.ref.collection("apps").add(data);
+      console.log(`Dodano „${entry.name}” do grupy „${g.get("name")}” (automatycznie).`);
+    }
+  }
 
   const message = buildMessage(appName, latest);
   if (env.DRY_RUN === "true") {
