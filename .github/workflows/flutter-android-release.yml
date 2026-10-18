@@ -270,7 +270,9 @@ jobs:
               "assetName": os.path.basename(apk),
               "size": os.path.getsize(apk),
               "sha256": digest.hexdigest(),
-              "signerSha256": find(r"^Signer #1 certificate SHA-256 digest: ([0-9a-fA-F:]+)", certs, "signerSha256").replace(":", "").lower(),
+              # "Signer #1 certificate SHA-256 digest: …" albo w nowszym apksigner
+              # "Signer (minSdkVersion=24, maxSdkVersion=…) certificate SHA-256 digest: …"
+              "signerSha256": find(r"^Signer.*?certificate SHA-256 digest: ([0-9a-fA-F:]+)", certs, "signerSha256").replace(":", "").lower(),
               "abi": os.environ["ABI"],
               "tag": os.environ["TAG"],
               "commit": os.environ["COMMIT"],
