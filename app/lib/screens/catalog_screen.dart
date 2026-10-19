@@ -76,7 +76,7 @@ class _CatalogScreenState extends State<CatalogScreen> with WidgetsBindingObserv
                 },
                 itemBuilder: (_) => [
                   const PopupMenuItem(value: 'join', child: Text('Dołącz kodem zaproszenia')),
-                  const PopupMenuItem(value: 'admin', child: Text('Grupy i aplikacje')),
+                  PopupMenuItem(value: 'admin', child: Text(c.isAdmin ? 'Grupy i aplikacje' : 'Moje grupy')),
                   const PopupMenuItem(value: 'settings', child: Text('Ustawienia')),
                 ],
               ),
@@ -108,8 +108,8 @@ class _CatalogScreenState extends State<CatalogScreen> with WidgetsBindingObserv
                 else if (entries.isEmpty)
                   _Empty(
                     icon: Icons.apps_outlined,
-                    text: c.isOwnerOfAnyGroup
-                        ? 'Nie ma jeszcze aplikacji. Dodaj je w menu: Grupy i aplikacje.'
+                    text: c.isAdmin
+                        ?'Nie ma jeszcze aplikacji. Dodaj je w menu: Grupy i aplikacje.'
                         : 'Nie ma jeszcze aplikacji w Twoich grupach.',
                   )
                 else ...[
@@ -224,7 +224,7 @@ class _NoGroup extends StatelessWidget {
         Text('Nie należysz jeszcze do żadnej grupy', style: theme.textTheme.titleMedium, textAlign: TextAlign.center),
         const SizedBox(height: 8),
         Text(
-          'Wpisz kod zaproszenia albo poproś właściciela sklepu, żeby dodał Cię po e-mailu:\n'
+          'Wpisz kod zaproszenia albo poproś administratora sklepu, żeby dodał Cię po e-mailu:\n'
           '${controller.repo.email}',
           textAlign: TextAlign.center,
         ),

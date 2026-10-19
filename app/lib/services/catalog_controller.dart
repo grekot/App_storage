@@ -133,6 +133,9 @@ class CatalogController extends ChangeNotifier with WidgetsBindingObserver {
 
   bool get isOwnerOfAnyGroup => groups.any((g) => g.isOwner(repo.uid));
 
+  /// Administrator sklepu (StoreConfig.adminUids) - jedyny, kto widzi zarządzanie.
+  bool get isAdmin => StoreConfig.isAdmin(repo.uid);
+
   int get updatesCount => _entries.values.where((e) => e.status == AppStatus.updateAvailable).length;
 
   // ------------------------------------------------------------------ start / odświeżanie

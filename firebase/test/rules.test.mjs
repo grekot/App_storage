@@ -23,7 +23,8 @@ import {
   where,
 } from "firebase/firestore";
 
-const OWNER = { uid: "owner", email: "owner@x.pl" };
+// Administrator = uid wpisany w regułach (isAdmin).
+const OWNER = { uid: "82qeJdUO8qbzhniNK6bE6xUEovW2", email: "owner@x.pl" };
 const MEMBER = { uid: "member", email: "member@x.pl" };
 const NEW = { uid: "newbie", email: "newbie@x.pl" };
 const OUTSIDER = { uid: "outsider", email: "outsider@x.pl" };
@@ -99,13 +100,30 @@ describe("grupy", () => {
     if (snap.size !== 1) throw new Error("oczekiwano 1 grupy, jest " + snap.size);
   });
 
-  test("tworzenie tylko jako właściciel i jedyny członek", async () => {
-    const base = { name: "Nowa", memberEmails: { [NEW.uid]: NEW.email } };
-    await assertSucceeds(setDoc(doc(db(NEW), "groups/n1"), { ...base, ownerId: NEW.uid, members: [NEW.uid] }));
-    await assertFails(setDoc(doc(db(NEW), "groups/n2"), { ...base, ownerId: OWNER.uid, members: [NEW.uid] }));
+  test("grupy zakłada tylko administrator, jako właściciel i jedyny członek", async () => {
+    const adm = { name: "Nowa", memberEmails: { [OWNER.uid]: OWNER.email } };
+    await assertSucceeds(setDoc(doc(db(OWNER), "groups/n1"), { ...adm, ownerId: OWNER.uid, members: [OWNER.uid] }));
     await assertFails(
-      setDoc(doc(db(NEW), "groups/n3"), { ...base, ownerId: NEW.uid, members: [NEW.uid, MEMBER.uid] }),
+      setDoc(doc(db(OWNER), "groups/n2"), { ...adm, ownerId: OWNER.uid, members: [OWNER.uid, MEMBER.uid] }),
     );
+    const base = { name: "Moja", memberEmails: { [NEW.uid]: NEW.email } };
+    await assertFails(setDoc(doc(db(NEW), "groups/n3"), { ...base, ownerId: NEW.uid, members: [NEW.uid] }));
+    await assertFails(setDoc(doc(db(NEW), "groups/n4"), { ...base, ownerId: OWNER.uid, members: [NEW.uid] }));
+  });
+
+  test("nie-administrator nie zarządza nawet grupą, której jest właścicielem", async () => {
+    // g2 należy do OUTSIDER (np. grupa sprzed zmiany reguł)
+    await assertFails(updateDoc(doc(db(OUTSIDER), "groups/g2"), { name: "Zmieniona" }));
+    await assertFails(
+      setDoc(doc(db(OUTSIDER), "groups/g2/apps/x"), { name: "X", packageName: "pl.x.y", repo: "a/b" }),
+    );
+    await assertFails(
+      setDoc(doc(db(OUTSIDER), "invites/ZZZZZZZZ"), {
+        groupId: "g2", groupName: "Inna", createdBy: OUTSIDER.uid, expiresAt: inDays(7),
+      }),
+    );
+    await assertFails(deleteDoc(doc(db(OUTSIDER), "groups/g2")));
+    await assertSucceeds(getDoc(doc(db(OUTSIDER), "groups/g2")));
   });
 
   test("właściciel dodaje i usuwa osoby, członek nie", async () => {
@@ -125,14 +143,15 @@ describe("grupy", () => {
     await assertFails(updateDoc(doc(db(OWNER), "groups/g1"), { ownerId: MEMBER.uid }));
   });
 
-  test("członek sam wychodzi, ale nie zmienia nic więcej", async () => {
+  test("członek nie zmienia grupy i nie wychodzi sam (usuwa go administrator)", async () => {
+    await assertFails(updateDoc(doc(db(MEMBER), "groups/g1"), { name: "Moja" }));
     await assertFails(
       updateDoc(doc(db(MEMBER), "groups/g1"), {
-        members: arrayRemove(MEMBER.uid), [`memberEmails.${MEMBER.uid}`]: deleteField(), name: "Moja",
+        members: arrayRemove(MEMBER.uid), [`memberEmails.${MEMBER.uid}`]: deleteField(), updatedAt: serverTimestamp(),
       }),
     );
     await assertSucceeds(
-      updateDoc(doc(db(MEMBER), "groups/g1"), {
+      updateDoc(doc(db(OWNER), "groups/g1"), {
         members: arrayRemove(MEMBER.uid), [`memberEmails.${MEMBER.uid}`]: deleteField(), updatedAt: serverTimestamp(),
       }),
     );

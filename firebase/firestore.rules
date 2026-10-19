@@ -5,6 +5,9 @@ rules_version = '2';
 // Testy: firebase/test (npm test - emulator).
 //
 // Sklep rodzinny:
+//   Administrator (isAdmin) - jedyny, kto zakłada grupy i zarządza aplikacjami, osobami,
+//   zaproszeniami i zaufanymi kluczami. Pozostali tylko widzą swoje grupy i ich aplikacje
+//   (oraz dołączają kodem zaproszenia od administratora).
 //   groups/{gid}                     name, ownerId, members[], memberEmails{uid: e-mail}, trustedSigners[], lastInvite
 //   groups/{gid}/apps/{appId}        aplikacja w katalogu grupy (+ latest - zapisuje CI kontem usługi)
 //   groups/{gid}/installs/{uid_pkg}  kto ma którą wersję
@@ -109,12 +112,19 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/groups/$(gid)).data;
     }
 
+    // Administratorzy sklepu (uid z Firebase Auth). Ta sama lista jest w aplikacji:
+    // app/lib/config.dart → StoreConfig.adminUids.
+    //   82qeJdUO8qbzhniNK6bE6xUEovW2 = grzegorz.kotarba@gmail.com
+    function isAdmin() {
+      return signedIn() && request.auth.uid in ['82qeJdUO8qbzhniNK6bE6xUEovW2'];
+    }
+
     function isGroupMember(gid) {
       return signedIn() && request.auth.uid in groupData(gid).members;
     }
 
     function isGroupOwner(gid) {
-      return signedIn() && groupData(gid).ownerId == request.auth.uid;
+      return isAdmin() && groupData(gid).ownerId == request.auth.uid;
     }
 
     function changedOnly(keys) {
@@ -128,19 +138,12 @@ service cloud.firestore {
         && data.ownerId in data.members;
     }
 
-    // Właściciel zmienia wszystko poza właścicielem (i nie może zniknąć z grupy - validGroup).
+    // Administrator-właściciel zmienia wszystko poza właścicielem (i nie może zniknąć z grupy - validGroup).
+    // Członkowie nie zmieniają grupy (także nie wychodzą sami - usuwa ich administrator).
     function ownerEdits() {
-      return request.auth.uid == resource.data.ownerId
+      return isAdmin()
+        && request.auth.uid == resource.data.ownerId
         && request.resource.data.ownerId == resource.data.ownerId;
-    }
-
-    // Członek (nie właściciel) wypisuje się sam.
-    function memberLeaves() {
-      return request.auth.uid != resource.data.ownerId
-        && changedOnly(['members', 'memberEmails', 'updatedAt'])
-        && request.resource.data.members.toSet()
-             == resource.data.members.toSet().difference([request.auth.uid].toSet())
-        && !(request.auth.uid in request.resource.data.memberEmails);
     }
 
     // Nowa osoba dopisuje się sama ważnym kodem zaproszenia do tej grupy
@@ -169,15 +172,15 @@ service cloud.firestore {
     match /groups/{gid} {
       allow read: if signedIn() && request.auth.uid in resource.data.members;
 
-      allow create: if signedIn()
+      allow create: if isAdmin()
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.members == [request.auth.uid]
         && validGroup(request.resource.data);
 
       allow update: if signedIn() && validGroup(request.resource.data)
-        && (ownerEdits() || memberLeaves() || joinsWithInvite(gid));
+        && (ownerEdits() || joinsWithInvite(gid));
 
-      allow delete: if signedIn() && request.auth.uid == resource.data.ownerId;
+      allow delete: if isAdmin() && request.auth.uid == resource.data.ownerId;
 
       match /apps/{appId} {
         allow read: if isGroupMember(gid);

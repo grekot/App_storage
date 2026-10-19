@@ -94,9 +94,6 @@ class StoreRepository {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-  /// Wypisanie się z grupy (nie dotyczy właściciela).
-  Future<void> leaveGroup(String gid) => removeMember(gid, uid);
-
   Future<void> addTrustedSigner(String gid, String sha256) => _groups.doc(gid).update({
         'trustedSigners': FieldValue.arrayUnion([sha256]),
         'updatedAt': FieldValue.serverTimestamp(),

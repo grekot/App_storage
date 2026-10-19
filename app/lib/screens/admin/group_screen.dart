@@ -37,7 +37,8 @@ class GroupScreen extends StatelessWidget {
             ),
           );
         }
-        if (!g.isOwner(repo.uid)) return _MemberView(controller: controller, group: g);
+        // Zarządzanie tylko dla administratora-właściciela; pozostali widzą podgląd.
+        if (!g.isOwner(repo.uid) || !controller.isAdmin) return _MemberView(controller: controller, group: g);
         return DefaultTabController(
           length: 5,
           child: Scaffold(
@@ -109,34 +110,50 @@ class _MemberView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Podgląd dla członka: kto prowadzi grupę i jakie aplikacje są w niej udostępnione.
+    // Zmiany (aplikacje, osoby, wyjście z grupy) robi administrator.
     return Scaffold(
       appBar: AppBar(title: Text(group.name)),
-      body: ListView(children: [
-        ListTile(
-          leading: const Icon(Icons.admin_panel_settings_outlined),
-          title: Text(group.ownerEmail),
-          subtitle: const Text('Prowadzi grupę'),
-        ),
-        const Divider(),
-        for (final uid in group.members.where((u) => u != group.ownerId))
-          ListTile(leading: const Icon(Icons.person_outline), title: Text(group.memberEmails[uid] ?? uid)),
-        const SizedBox(height: 24),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: OutlinedButton.icon(
-            icon: const Icon(Icons.logout),
-            label: const Text('Opuść grupę'),
-            onPressed: () async {
-              final ok = await _confirm(context, 'Opuścić grupę „${group.name}”?',
-                  'Jej aplikacje znikną z katalogu. Zainstalowane zostaną na telefonie.');
-              if (ok && context.mounted) {
-                Navigator.of(context).pop();
-                await controller.repo.leaveGroup(group.id);
-              }
-            },
-          ),
-        ),
-      ]),
+      body: StreamBuilder<List<StoreApp>>(
+        stream: controller.repo.watchApps(group.id),
+        builder: (context, snap) {
+          final apps = (snap.data ?? const <StoreApp>[]).where((a) => !a.hidden).toList();
+          return ListView(children: [
+            ListTile(
+              leading: const Icon(Icons.admin_panel_settings_outlined),
+              title: Text(group.ownerEmail),
+              subtitle: const Text('Administrator grupy'),
+            ),
+            const Divider(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text('Aplikacje w tej grupie', style: Theme.of(context).textTheme.titleSmall),
+            ),
+            if (snap.connectionState == ConnectionState.waiting && apps.isEmpty)
+              const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
+            else if (apps.isEmpty)
+              const Padding(padding: EdgeInsets.all(16), child: Text('Brak aplikacji.'))
+            else
+              for (final a in apps)
+                ListTile(
+                  leading: AppIcon(
+                    name: a.name,
+                    url: a.iconUrl.isEmpty ? controller.entry(a.packageName)?.iconUrl : a.iconUrl,
+                    size: 40,
+                  ),
+                  title: Text(a.name),
+                  subtitle: a.description.isEmpty ? null : Text(a.description, maxLines: 2),
+                ),
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'Aplikacje i skład grupy ustala administrator sklepu.',
+                style: TextStyle(fontStyle: FontStyle.italic),
+              ),
+            ),
+          ]);
+        },
+      ),
     );
   }
 }

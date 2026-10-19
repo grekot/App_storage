@@ -21,6 +21,15 @@ class StoreConfig {
   /// (anonimowo: 60 zapytań na godzinę z jednego adresu IP).
   static const releaseCacheTtl = Duration(minutes: 15);
 
+  /// Administratorzy sklepu: zakładają grupy i zarządzają aplikacjami, osobami i zaproszeniami.
+  /// Pozostali tylko widzą swoje grupy i ich aplikacje. Tę samą listę egzekwują reguły
+  /// Firestore (firebase/firestore.rules → isAdmin) - aplikacja jedynie ukrywa przyciski.
+  static const adminUids = {
+    '82qeJdUO8qbzhniNK6bE6xUEovW2', // grzegorz.kotarba@gmail.com
+  };
+
+  static bool isAdmin(String uid) => adminUids.contains(uid);
+
   /// Schemat linków: `grekot-sklep://app/PAKIET`, `grekot-sklep://join/KOD`
   static const linkScheme = 'grekot-sklep';
 }

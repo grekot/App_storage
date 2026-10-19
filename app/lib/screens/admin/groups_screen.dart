@@ -25,19 +25,25 @@ class GroupsScreen extends StatelessWidget {
       listenable: controller,
       builder: (context, _) {
         final groups = controller.groups;
+        final admin = controller.isAdmin;
         return Scaffold(
-          appBar: AppBar(title: const Text('Grupy i aplikacje')),
-          floatingActionButton: FloatingActionButton.extended(
-            onPressed: () => _create(context),
-            icon: const Icon(Icons.group_add_outlined),
-            label: const Text('Nowa grupa'),
-          ),
+          appBar: AppBar(title: Text(admin ? 'Grupy i aplikacje' : 'Moje grupy')),
+          // Grupy zakłada tylko administrator (reguły Firestore i tak nie pozwolą innym).
+          floatingActionButton: admin
+              ? FloatingActionButton.extended(
+                  onPressed: () => _create(context),
+                  icon: const Icon(Icons.group_add_outlined),
+                  label: const Text('Nowa grupa'),
+                )
+              : null,
           body: groups.isEmpty
-              ? const Padding(
-                  padding: EdgeInsets.all(32),
+              ? Padding(
+                  padding: const EdgeInsets.all(32),
                   child: Text(
-                    'Grupa to osoby, którym udostępniasz aplikacje (np. „Rodzina”). '
-                    'Utwórz grupę, dodaj do niej aplikacje i zaproś osoby.',
+                    admin
+                        ? 'Grupa to osoby, którym udostępniasz aplikacje (np. „Rodzina”). '
+                            'Utwórz grupę, dodaj do niej aplikacje i zaproś osoby.'
+                        : 'Nie należysz jeszcze do żadnej grupy. Grupy przydziela administrator sklepu.',
                     textAlign: TextAlign.center,
                   ),
                 )
@@ -48,7 +54,7 @@ class GroupsScreen extends StatelessWidget {
                       title: Text(g.name),
                       subtitle: Text(g.isOwner(uid)
                           ? 'Prowadzisz · osób: ${g.members.length}'
-                          : 'Prowadzi ${g.ownerEmail} · osób: ${g.members.length}'),
+                          : 'Prowadzi ${g.ownerEmail}'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => GroupScreen(controller: controller, groupId: g.id)),

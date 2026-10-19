@@ -24,8 +24,12 @@ Plan i decyzje: [PROJEKT.md](PROJEKT.md).
 ## Jak działa sklep
 
 - **Konto**: logowanie z pakietu `wspolne` (T_rex_3). To samo konto co w Zakupach i Powrocie.
-- **Grupy** (`groups/{gid}`): właściciel dodaje osoby po e-mailu albo daje im kod zaproszenia
-  (ważny 7 dni, wiele użyć). Członek widzi aplikacje grupy i może z niej wyjść.
+- **Administrator**: tylko on zakłada grupy i zarządza aplikacjami, osobami, zaproszeniami
+  i zaufanymi kluczami. Lista administratorów jest w regułach (`firebase/firestore.rules` → `isAdmin`)
+  i w aplikacji (`app/lib/config.dart` → `adminUids`). Zmiana listy wymaga obu miejsc i publikacji reguł.
+- **Grupy** (`groups/{gid}`): administrator dodaje osoby po e-mailu albo daje im kod zaproszenia
+  (ważny 7 dni, wiele użyć). Członek tylko widzi swoje grupy i ich aplikacje, nie może też sam
+  z grupy wyjść (usuwa go administrator).
 - **Aplikacje** (`groups/{gid}/apps`): nazwa, repozytorium GitHub, prefiks tagów (`v` albo
   `zakupy-v` w monorepo), nazwa pliku APK. Przycisk „Sprawdź na GitHubie” sam uzupełnia pakiet.
 - **Wersje**: z pola `latest` zapisanego przez CI, a gdy go nie ma, z GitHub API
