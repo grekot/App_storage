@@ -55,6 +55,10 @@ on:
       run_tests:
         type: boolean
         default: true
+      fatal_warnings:
+        description: 'false = ostrzeżenia flutter analyze nie blokują wydania (starsze projekty)'
+        type: boolean
+        default: true
       version_code_offset:
         description: 'Dodawany do github.run_number (versionCode musi rosnąć także po przenosinach repo)'
         type: number
@@ -204,7 +208,14 @@ jobs:
           echo "Odcisk klucza podpisu: $SIGNER"
 
       - name: Analiza
-        run: flutter analyze --no-fatal-infos
+        env:
+          FATAL_WARNINGS: ${{ inputs.fatal_warnings }}
+        run: |
+          if [ "$FATAL_WARNINGS" = "true" ]; then
+            flutter analyze --no-fatal-infos
+          else
+            flutter analyze --no-fatal-infos --no-fatal-warnings
+          fi
 
       - name: Testy
         if: inputs.run_tests
