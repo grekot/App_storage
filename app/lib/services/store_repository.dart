@@ -5,6 +5,7 @@ import 'package:wspolne/wspolne.dart' show emailKey;
 
 import '../config.dart';
 import '../domain/models.dart';
+import '../domain/release.dart';
 
 enum AddMemberResult { added, alreadyMember, notFound }
 
@@ -44,15 +45,16 @@ class StoreRepository {
   Stream<StoreGroup?> watchGroup(String gid) =>
       _groups.doc(gid).snapshots().map((d) => d.exists ? StoreGroup.fromDoc(d) : null);
 
-  Future<String> createGroup(String name) async {
+  /// [trustedSigners] - zwykle klucze z istniejących grup, żeby nowa grupa ufała tym samym aplikacjom.
+  Future<String> createGroup(String name, {Iterable<String> trustedSigners = const []}) async {
     final ref = await _groups.add({
       'name': name.trim(),
       'ownerId': uid,
       'members': [uid],
       'memberEmails': {uid: emailKey(email)},
-      'trustedSigners': <String>[],
-      // Nowe aplikacje dopisują się same przy pierwszym wydaniu (tools/ci-publish).
-      'autoAdd': true,
+      'trustedSigners': trustedSigners.toSet().toList(),
+      // Aplikacje przypisuje administrator; autoAdd włącza się tylko wyraźnie (sklep auto tak).
+      'autoAdd': false,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -120,6 +122,102 @@ class StoreRepository {
   }
 
   Future<void> deleteApp(String gid, String appId) => _apps(gid).doc(appId).delete();
+
+  // ------------------------------------------------------------------ biblioteka (administrator)
+
+  CollectionReference<Map<String, dynamic>> get _library => db.collection('library');
+
+  /// Wszystkie aplikacje administratora (library/{pakiet}), także nieprzypisane do żadnej grupy.
+  Stream<List<StoreApp>> watchLibrary() => _library.snapshots().map((s) =>
+      s.docs.map((d) => StoreApp.fromDoc('', d)).toList()
+        ..sort((a, b) {
+          final o = a.order.compareTo(b.order);
+          return o != 0 ? o : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        }));
+
+  /// Pole `latest` w formacie Firestore (publishedAt jako Timestamp).
+  static Map<String, dynamic> latestToFirestore(AppRelease r) {
+    final j = r.toJson();
+    if (r.publishedAt != null) j['publishedAt'] = Timestamp.fromDate(r.publishedAt!);
+    return j;
+  }
+
+  Map<String, dynamic> _appData(StoreApp app, {AppRelease? latest}) => {
+        ...app.toEditableJson(),
+        if ((latest ?? app.latest) != null) 'latest': latestToFirestore((latest ?? app.latest)!),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+  /// Zapis do biblioteki (id = pakiet) i odświeżenie kopii we wszystkich grupach.
+  Future<void> saveLibraryApp(StoreApp app, List<StoreGroup> ownedGroups, {AppRelease? latest}) async {
+    final pkg = app.packageName.trim();
+    await _library.doc(pkg).set(_appData(app, latest: latest), SetOptions(merge: true));
+    for (final g in ownedGroups) {
+      final copies = await _apps(g.id).where('packageName', isEqualTo: pkg).get();
+      for (final c in copies.docs) {
+        await c.reference.set(_appData(app, latest: latest), SetOptions(merge: true));
+      }
+    }
+  }
+
+  /// Usunięcie z biblioteki i ze wszystkich grup.
+  Future<void> deleteLibraryApp(String packageName, List<StoreGroup> ownedGroups) async {
+    for (final g in ownedGroups) {
+      await unassignApp(g.id, packageName);
+    }
+    await _library.doc(packageName).delete();
+  }
+
+  /// Udostępnienie aplikacji z biblioteki grupie (kopia wpisu w groups/{gid}/apps/{pakiet}).
+  Future<void> assignApp(String gid, StoreApp app) async {
+    final existing = await _apps(gid).where('packageName', isEqualTo: app.packageName).limit(1).get();
+    if (existing.docs.isNotEmpty) return;
+    await _apps(gid).doc(app.packageName).set({..._appData(app), 'createdAt': FieldValue.serverTimestamp()});
+  }
+
+  Future<void> unassignApp(String gid, String packageName) async {
+    final copies = await _apps(gid).where('packageName', isEqualTo: packageName).get();
+    for (final c in copies.docs) {
+      await c.reference.delete();
+    }
+  }
+
+  /// Ustawia dokładnie te grupy, w których ma być aplikacja.
+  Future<void> setAppGroups(StoreApp app, Set<String> groupIds, List<StoreGroup> ownedGroups) async {
+    for (final g in ownedGroups) {
+      if (groupIds.contains(g.id)) {
+        await assignApp(g.id, app);
+      } else {
+        await unassignApp(g.id, app.packageName);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ konta (administrator)
+
+  /// Wszystkie konta z książki adresowej (Zakupy, Powrót, Sklep) - tylko administrator może je wylistować.
+  Stream<List<UserAccount>> watchUsers() => db.collection('emails').snapshots().map((s) => s.docs
+      .map((d) => UserAccount(uid: (d.data()['uid'] as String?) ?? '', email: (d.data()['email'] as String?) ?? d.id))
+      .where((u) => u.uid.isNotEmpty)
+      .toList()
+    ..sort((a, b) => a.email.compareTo(b.email)));
+
+  /// Ustawia dokładnie te grupy (spośród prowadzonych), do których należy osoba.
+  Future<void> setUserGroups(UserAccount user, Set<String> groupIds, List<StoreGroup> ownedGroups) async {
+    for (final g in ownedGroups) {
+      if (user.uid == g.ownerId) continue; // administratora nie wypisujemy z jego grup
+      final inside = g.members.contains(user.uid);
+      if (groupIds.contains(g.id) && !inside) {
+        await _groups.doc(g.id).update({
+          'members': FieldValue.arrayUnion([user.uid]),
+          FieldPath(['memberEmails', user.uid]): emailKey(user.email),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } else if (!groupIds.contains(g.id) && inside) {
+        await removeMember(g.id, user.uid);
+      }
+    }
+  }
 
   // ------------------------------------------------------------------ zaproszenia
 

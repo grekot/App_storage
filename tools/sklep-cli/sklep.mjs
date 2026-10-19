@@ -257,45 +257,52 @@ const commands = {
   async status() {
     const { uid, email } = await session();
     const groups = await myGroups();
-    console.log(`Konto: ${email}`);
-    if (!groups.length) return console.log("Nie należysz do żadnej grupy. Utwórz: sklep nowa-grupa Rodzina");
+    console.log(`Konto: ${email}${isAdminUid(uid) ? "  (administrator)" : ""}`);
+    if (!groups.length) console.log("Nie należysz do żadnej grupy.");
     for (const g of groups) {
       const own = g.ownerId === uid;
       console.log(`\n■ ${g.name}  (${own ? "prowadzisz" : "prowadzi " + (g.memberEmails?.[g.ownerId] ?? "?")}, ` +
         `osób: ${g.members.length}${g.autoAdd ? ", nowe aplikacje dodają się same" : ""})`);
-      const apps = (await listDocs(`groups/${g.id}/apps`)).sort((a, b) => (a.order ?? 100) - (b.order ?? 100) || a.name.localeCompare(b.name));
-      if (!apps.length) console.log("   (brak aplikacji - dodaj: sklep dodaj grekot/NazwaRepo)");
-      for (const a of apps) {
-        const v = a.latest ? `${a.latest.versionName} (${a.latest.versionCode})` : "wersja z GitHuba";
-        console.log(`   • ${a.name.padEnd(22)} ${v.padEnd(16)} ${a.repo} ${a.tagPrefix}*${a.hidden ? "  [ukryta]" : ""}${a.prerelease ? "  [beta]" : ""}`);
-      }
+      if (own) console.log(`   osoby: ${g.members.map((u) => g.memberEmails?.[u] ?? u).join(", ")}`);
+      const apps = sortApps(await listDocs(`groups/${g.id}/apps`));
+      if (!apps.length) console.log("   (brak aplikacji - przypisz: sklep przypisz <aplikacja> --grupa " + g.name + ")");
+      for (const a of apps) console.log(`   • ${appLine(a)}`);
+    }
+    if (isAdminUid(uid)) {
+      const lib = await listDocs("library").catch(() => []);
+      const assigned = new Set();
+      for (const g of groups) (await listDocs(`groups/${g.id}/apps`)).forEach((a) => assigned.add(a.packageName));
+      const free = lib.filter((a) => !assigned.has(a.packageName));
+      console.log(`\nBiblioteka: ${lib.length} aplikacji` + (free.length ? `, nieprzypisane: ${free.map((a) => a.name).join(", ")}` : ""));
     }
   },
 
-  async "nowa-grupa"(args) {
-    const name = args._.join(" ").trim();
-    if (!name) throw new Error("Podaj nazwę: sklep nowa-grupa Rodzina");
-    const { uid, email } = await session();
-    const g = await createDoc("groups", {
-      name, ownerId: uid, members: [uid], memberEmails: { [uid]: email.toLowerCase() },
-      trustedSigners: [], autoAdd: true, createdAt: new Date(),
-    });
-    console.log(`Utworzono grupę „${name}”. Nowe aplikacje będą się do niej dodawać same przy wydaniu.`);
-    return g;
+  // ---------------------------------------------------------------- biblioteka aplikacji
+
+  async aplikacje() {
+    const lib = sortApps(await listDocs("library"));
+    if (!lib.length) return console.log("Biblioteka jest pusta. Dodaj: sklep dodaj grekot/NazwaRepo (albo jednorazowo: sklep migruj)");
+    const owned = await ownedGroups();
+    const groupsOf = await assignmentMap(owned);
+    console.log("Biblioteka aplikacji (widzisz ją tylko Ty):\n");
+    for (const a of lib) {
+      const gs = groupsOf.get(a.packageName) ?? [];
+      console.log(`• ${appLine(a)}\n    grupy: ${gs.length ? gs.map((g) => g.name).join(", ") : "— (nieprzypisana)"}`);
+    }
   },
 
   async dodaj(args) {
-    if (!args._[0]) throw new Error("Podaj repozytorium: sklep dodaj grekot/EscapeRoom [--prefiks zakupy-v]");
+    if (!args._[0]) throw new Error("Podaj repozytorium: sklep dodaj grekot/EscapeRoom [--prefiks zakupy-v] [--grupa Domowa,Rodzice]");
     const repo = normalizeRepo(args._[0]);
-    const group = await ownedGroup(args);
+    await requireAdmin();
     const d = await detect(repo, { prefix: args.prefiks, withPre: yes(args.beta) });
-    if (d.appJson.packageName === SELF_PACKAGE) throw new Error("To jest sam sklep - nie dodaje się go do katalogu.");
-    const apps = await listDocs(`groups/${group.id}/apps`);
-    const existing = apps.find((a) => a.packageName === d.appJson.packageName);
+    const pkg = d.appJson.packageName;
+    if (pkg === SELF_PACKAGE) throw new Error("To jest sam sklep - nie dodaje się go do katalogu.");
+    const existing = await getDoc(`library/${pkg}`).catch(() => null);
     const data = {
       name: args.nazwa ?? existing?.name ?? d.name,
       description: args.opis ?? existing?.description ?? "",
-      packageName: d.appJson.packageName,
+      packageName: pkg,
       repo,
       tagPrefix: d.prefix,
       assetName: d.assetName,
@@ -305,25 +312,39 @@ const commands = {
       hidden: yes(args.ukryta) ?? existing?.hidden ?? false,
       latest: d.latest,
     };
-    if (existing) {
-      await update(existing.path, data);
-      console.log(`Zaktualizowano „${data.name}” w grupie „${group.name}”: ${d.latest.versionName} (${d.latest.versionCode}).`);
-    } else {
-      await createDoc(`groups/${group.id}/apps`, { ...data, createdAt: new Date() });
-      console.log(`Dodano „${data.name}” (${data.packageName}) do grupy „${group.name}”: wersja ${d.latest.versionName}.`);
+    await update(`library/${pkg}`, existing ? data : { ...data, createdAt: new Date() }, { mustExist: false });
+    console.log(`${existing ? "Odświeżono" : "Dodano do biblioteki"} „${data.name}” (${pkg}): wersja ${d.latest.versionName}.`);
+    await syncCopies(data);
+    if (args.grupa) await commands.przypisz({ _: [pkg], grupa: args.grupa });
+    else if (!existing) console.log(`Przypisz ją do grup: sklep przypisz "${data.name}" --grupa Domowa`);
+  },
+
+  async przypisz(args) {
+    const app = await libApp(args._.join(" "));
+    const groups = await groupsByNames(args.grupa, "przypisz <aplikacja> --grupa Domowa,Rodzice");
+    for (const g of groups) {
+      const copies = (await listDocs(`groups/${g.id}/apps`)).filter((a) => a.packageName === app.packageName);
+      if (copies.length) {
+        console.log(`„${app.name}” już jest w grupie „${g.name}”.`);
+        continue;
+      }
+      await update(`groups/${g.id}/apps/${app.packageName}`, { ...copyFields(app), createdAt: new Date() }, { mustExist: false });
+      console.log(`Przypisano „${app.name}” do grupy „${g.name}”.`);
     }
   },
 
-  async usun(args) {
-    const group = await ownedGroup(args);
-    const app = await appIn(group, args._.join(" "));
-    await deleteDoc(app.path);
-    console.log(`Usunięto „${app.name}” z grupy „${group.name}” (zainstalowane kopie zostają na telefonach).`);
+  async odepnij(args) {
+    const app = await libApp(args._.join(" "));
+    const groups = await groupsByNames(args.grupa, "odepnij <aplikacja> --grupa Domowa");
+    for (const g of groups) {
+      const copies = (await listDocs(`groups/${g.id}/apps`)).filter((a) => a.packageName === app.packageName);
+      for (const c of copies) await deleteDoc(c.path);
+      console.log(copies.length ? `Odpięto „${app.name}” od grupy „${g.name}”.` : `„${app.name}” nie było w grupie „${g.name}”.`);
+    }
   },
 
   async ustaw(args) {
-    const group = await ownedGroup(args);
-    const app = await appIn(group, args._.join(" "));
+    const app = await libApp(args._.join(" "));
     const data = {};
     if (args.nazwa !== undefined) data.name = args.nazwa;
     if (args.opis !== undefined) data.description = args.opis;
@@ -332,52 +353,153 @@ const commands = {
     if (args.beta !== undefined) data.prerelease = yes(args.beta);
     if (args.ukryta !== undefined) data.hidden = yes(args.ukryta);
     if (!Object.keys(data).length) throw new Error("Co zmienić? --nazwa, --opis, --kolejnosc, --ikona, --beta tak/nie, --ukryta tak/nie");
-    await update(app.path, data);
-    console.log(`Zmieniono „${app.name}”: ${Object.keys(data).join(", ")}.`);
+    await update(`library/${app.packageName}`, data);
+    const n = await syncCopies({ ...app, ...data });
+    console.log(`Zmieniono „${app.name}”: ${Object.keys(data).join(", ")} (biblioteka + ${n} grup).`);
+  },
+
+  async usun(args) {
+    const app = await libApp(args._.join(" "));
+    if (!yes(args.na_pewno)) {
+      throw new Error(`To usunie „${app.name}” z biblioteki i ze WSZYSTKICH grup. Dodaj --na_pewno tak ` +
+        `(albo tylko z jednej grupy: sklep odepnij "${app.name}" --grupa NAZWA).`);
+    }
+    for (const g of await ownedGroups()) {
+      for (const c of (await listDocs(`groups/${g.id}/apps`)).filter((a) => a.packageName === app.packageName)) await deleteDoc(c.path);
+    }
+    await deleteDoc(`library/${app.packageName}`);
+    console.log(`Usunięto „${app.name}” z biblioteki i wszystkich grup (zainstalowane kopie zostają na telefonach).`);
+  },
+
+  async migruj() {
+    await requireAdmin();
+    const lib = new Map((await listDocs("library")).map((a) => [a.packageName, a]));
+    let added = 0;
+    for (const g of await ownedGroups()) {
+      for (const a of await listDocs(`groups/${g.id}/apps`)) {
+        if (lib.has(a.packageName) || a.packageName === SELF_PACKAGE) continue;
+        const data = { ...copyFields(a), createdAt: new Date() };
+        await update(`library/${a.packageName}`, data, { mustExist: false });
+        lib.set(a.packageName, data);
+        added++;
+        console.log(`Biblioteka ← „${a.name}” (z grupy „${g.name}”)`);
+      }
+    }
+    console.log(added ? `Przeniesiono do biblioteki: ${added}. Przypisania do grup bez zmian.` : "Biblioteka jest już kompletna.");
+  },
+
+  // ---------------------------------------------------------------- grupy
+
+  async "nowa-grupa"(args) {
+    const name = args._.join(" ").trim();
+    if (!name) throw new Error('Podaj nazwę: sklep nowa-grupa Rodzice [--osoby "zona@example.com"]');
+    await requireAdmin();
+    const { uid, email } = await session();
+    await createDoc("groups", {
+      name, ownerId: uid, members: [uid], memberEmails: { [uid]: email.toLowerCase() },
+      trustedSigners: await sharedTrustedSigners(), autoAdd: false, createdAt: new Date(),
+    });
+    console.log(`Utworzono grupę „${name}” (jesteś w niej Ty). Aplikacje przypisz: sklep przypisz <aplikacja> --grupa "${name}"`);
+    if (args.osoby) {
+      for (const e of args.osoby.split(",")) await commands["dodaj-osobe"]({ _: [e.trim()], grupa: name });
+    }
+  },
+
+  async "usun-grupe"(args) {
+    const [g] = await groupsByNames(args._.join(" "), "usun-grupe NAZWA --na_pewno tak");
+    if (!yes(args.na_pewno)) throw new Error(`To usunie grupę „${g.name}”. Dodaj --na_pewno tak`);
+    for (const sub of ["apps", "installs"]) for (const d of await listDocs(`groups/${g.id}/${sub}`)) await deleteDoc(d.path);
+    await deleteDoc(`groups/${g.id}`);
+    console.log(`Usunięto grupę „${g.name}”. Aplikacje zostają w bibliotece i na telefonach.`);
+  },
+
+  async auto(args) {
+    const groups = await groupsByNames(args.grupa, "auto tak|nie --grupa NAZWA");
+    const on = yes(args._[0] ?? "tak");
+    for (const group of groups) {
+      await update(`groups/${group.id}`, { autoAdd: on });
+      console.log(on
+        ? `Nowe aplikacje będą się same dodawać do „${group.name}” przy pierwszym wydaniu.`
+        : `Automatyczne dodawanie do „${group.name}” wyłączone.`);
+    }
+  },
+
+  async zaufaj(args) {
+    const sha = (args._[0] ?? "").replace(/[^0-9a-fA-F]/g, "").toLowerCase();
+    if (sha.length !== 64) throw new Error("Podaj odcisk SHA-256 (64 znaki szesnastkowe).");
+    const groups = args.grupa ? await groupsByNames(args.grupa) : await ownedGroups();
+    for (const g of groups) await update(`groups/${g.id}`, {}, { arrayUnion: { trustedSigners: [sha] } });
+    console.log(`Dodano zaufany klucz do: ${groups.map((g) => g.name).join(", ")}.`);
+  },
+
+  // ---------------------------------------------------------------- osoby
+
+  async uzytkownicy() {
+    await requireAdmin();
+    const users = (await listDocs("emails")).sort((a, b) => a.email.localeCompare(b.email));
+    const groups = await ownedGroups();
+    console.log("Konta (wszyscy, którzy zalogowali się w Zakupach, Powrocie albo Sklepie):\n");
+    for (const u of users) {
+      const gs = groups.filter((g) => g.members.includes(u.uid)).map((g) => g.name);
+      console.log(`• ${u.email.padEnd(34)} ${gs.length ? gs.join(", ") : "— (bez grupy)"}`);
+    }
+    console.log(`\nPrzypisz: sklep dodaj-osobe <e-mail> --grupa Domowa,Rodzice`);
   },
 
   async osoby(args) {
-    const group = await ownedGroup(args);
-    console.log(`Grupa „${group.name}”:`);
-    for (const uid of group.members) {
-      console.log(`   • ${group.memberEmails?.[uid] ?? uid}${uid === group.ownerId ? "  (właściciel)" : ""}`);
+    const groups = args.grupa ? await groupsByNames(args.grupa) : await ownedGroups();
+    for (const group of groups) {
+      console.log(`Grupa „${group.name}”:`);
+      for (const uid of group.members) {
+        console.log(`   • ${group.memberEmails?.[uid] ?? uid}${uid === group.ownerId ? "  (administrator)" : ""}`);
+      }
     }
   },
 
   async "dodaj-osobe"(args) {
     const email = (args._[0] ?? "").trim().toLowerCase();
-    if (!email.includes("@")) throw new Error("Podaj e-mail: sklep dodaj-osobe ania@example.com");
-    const group = await ownedGroup(args);
+    if (!email.includes("@")) throw new Error("Podaj e-mail: sklep dodaj-osobe ania@example.com --grupa Domowa,Rodzice");
+    const groups = await groupsByNames(args.grupa, "dodaj-osobe <e-mail> --grupa Domowa,Rodzice");
     let entry;
     try {
       entry = await getDoc(`emails/${encodeURIComponent(email)}`);
     } catch {
-      throw new Error(`${email} nie ma jeszcze konta. Niech zainstaluje sklep i je założy - albo wyślij kod: sklep zaproszenie`);
+      throw new Error(`${email} nie ma jeszcze konta. Niech zainstaluje sklep i je założy - albo wyślij kod: sklep zaproszenie --grupa ...`);
     }
-    if (group.members.includes(entry.uid)) return console.log(`${email} już jest w grupie „${group.name}”.`);
-    await update(`groups/${group.id}`, { [`memberEmails.${entry.uid}`]: email }, { arrayUnion: { members: [entry.uid] } });
-    console.log(`Dodano ${email} do grupy „${group.name}”.`);
+    for (const group of groups) {
+      if (group.members.includes(entry.uid)) {
+        console.log(`${email} już jest w grupie „${group.name}”.`);
+        continue;
+      }
+      await update(`groups/${group.id}`, { [`memberEmails.${entry.uid}`]: email }, { arrayUnion: { members: [entry.uid] } });
+      console.log(`Dodano ${email} do grupy „${group.name}”.`);
+    }
   },
 
   async "usun-osobe"(args) {
     const q = (args._[0] ?? "").trim().toLowerCase();
-    const group = await ownedGroup(args);
-    const uid = Object.entries(group.memberEmails ?? {}).find(([, e]) => e === q)?.[0];
-    if (!uid) throw new Error(`W grupie nie ma ${q}.`);
-    if (uid === group.ownerId) throw new Error("Nie można usunąć właściciela.");
-    await update(`groups/${group.id}`, {}, { remove: [`memberEmails.${uid}`], arrayRemove: { members: [uid] } });
-    console.log(`Usunięto ${q} z grupy „${group.name}”.`);
+    const groups = await groupsByNames(args.grupa, "usun-osobe <e-mail> --grupa Domowa");
+    for (const group of groups) {
+      const uid = Object.entries(group.memberEmails ?? {}).find(([, e]) => e === q)?.[0];
+      if (!uid) {
+        console.log(`W grupie „${group.name}” nie ma ${q}.`);
+        continue;
+      }
+      if (uid === group.ownerId) throw new Error("Nie można usunąć administratora z jego grupy.");
+      await update(`groups/${group.id}`, {}, { remove: [`memberEmails.${uid}`], arrayRemove: { members: [uid] } });
+      console.log(`Usunięto ${q} z grupy „${group.name}”.`);
+    }
   },
 
   async zaproszenie(args) {
-    const group = await ownedGroup(args);
+    const [group] = await groupsByNames(args.grupa ?? (await ownedGroups()).map((g) => g.name).join(","), "zaproszenie --grupa NAZWA", { single: true });
     const { uid } = await session();
     const days = Number(args.dni ?? 7);
     const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     const code = Array.from({ length: 8 }, () => alphabet[randomInt(alphabet.length)]).join("");
     const expiresAt = new Date(Date.now() + days * 86400000);
     await createDoc("invites", { groupId: group.id, groupName: group.name, createdBy: uid, expiresAt, createdAt: new Date() }, code);
-    console.log(`Kod: ${code}  (ważny do ${expiresAt.toLocaleDateString("pl-PL")})\n`);
+    console.log(`Kod do grupy „${group.name}”: ${code}  (ważny do ${expiresAt.toLocaleDateString("pl-PL")})\n`);
     console.log("Wiadomość do wysłania:\n");
     console.log(`Zaproszenie do sklepu rodzinnego („${group.name}”).
 1. Zainstaluj sklep: https://grekot.github.io/App_storage/
@@ -386,63 +508,152 @@ const commands = {
   },
 
   async wersje(args) {
-    const group = await ownedGroup(args);
-    const apps = await listDocs(`groups/${group.id}/apps`);
-    const reports = await listDocs(`groups/${group.id}/installs`);
-    if (!reports.length) return console.log("Nikt jeszcze nie zgłosił instalacji (sklep robi to sam po instalacji).");
-    for (const a of apps) {
-      const rs = reports.filter((r) => r.packageName === a.packageName);
-      if (!rs.length) continue;
-      console.log(`\n${a.name} (najnowsza ${a.latest?.versionName ?? "?"})`);
-      for (const r of rs) {
-        const old = a.latest?.versionCode && r.versionCode < a.latest.versionCode;
-        console.log(`   ${old ? "⚠" : "✓"} ${r.email.padEnd(32)} ${r.versionName}`);
+    const groups = args.grupa ? await groupsByNames(args.grupa) : await ownedGroups();
+    for (const group of groups) {
+      const apps = await listDocs(`groups/${group.id}/apps`);
+      const reports = await listDocs(`groups/${group.id}/installs`);
+      console.log(`\n■ ${group.name}`);
+      if (!reports.length) {
+        console.log("   nikt jeszcze nie zgłosił instalacji");
+        continue;
+      }
+      for (const a of apps) {
+        const rs = reports.filter((r) => r.packageName === a.packageName);
+        if (!rs.length) continue;
+        console.log(`   ${a.name} (najnowsza ${a.latest?.versionName ?? "?"})`);
+        for (const r of rs) {
+          const old = a.latest?.versionCode && r.versionCode < a.latest.versionCode;
+          console.log(`      ${old ? "⚠" : "✓"} ${r.email.padEnd(32)} ${r.versionName}`);
+        }
       }
     }
   },
 
-  async auto(args) {
-    const group = await ownedGroup(args);
-    const on = yes(args._[0] ?? "tak");
-    await update(`groups/${group.id}`, { autoAdd: on });
-    console.log(on
-      ? `Nowe aplikacje będą się same dodawać do „${group.name}” przy pierwszym wydaniu.`
-      : `Automatyczne dodawanie do „${group.name}” wyłączone.`);
-  },
-
-  async zaufaj(args) {
-    const group = await ownedGroup(args);
-    const sha = (args._[0] ?? "").replace(/[^0-9a-fA-F]/g, "").toLowerCase();
-    if (sha.length !== 64) throw new Error("Podaj odcisk SHA-256 (64 znaki szesnastkowe).");
-    await update(`groups/${group.id}`, {}, { arrayUnion: { trustedSigners: [sha] } });
-    console.log(`Dodano zaufany klucz do „${group.name}”.`);
-  },
-
   async pomoc() {
-    console.log(`Sklep rodzinny - zarządzanie z komputera
+    console.log(`Sklep rodzinny - zarządzanie z komputera (administrator)
 
-  sklep login                         zaloguj się (raz; konto z Zakupów)
-  sklep status                        grupy, aplikacje i ich wersje
-  sklep dodaj <repo> [opcje]          dodaj albo odśwież aplikację - reszta wykrywa się sama
-        --prefiks zakupy-v              (tylko gdy repozytorium ma kilka aplikacji)
+  sklep login                              zaloguj się (raz; konto z Zakupów)
+  sklep status                             grupy, ich osoby i aplikacje
+
+ Aplikacje (biblioteka - widzisz ją tylko Ty)
+  sklep aplikacje                          wszystkie aplikacje i ich grupy
+  sklep dodaj <repo> [--grupa A,B]         dodaj/odśwież w bibliotece (reszta wykrywa się sama)
+        --prefiks zakupy-v                   (tylko gdy repozytorium ma kilka aplikacji)
         --nazwa "…" --opis "…" --kolejnosc 10 --beta tak --ukryta tak
-  sklep ustaw <aplikacja> [opcje]     zmień nazwę, opis, kolejność, ikonę, betę, ukrycie
-  sklep usun <aplikacja>              usuń z katalogu grupy
-  sklep osoby                         kto jest w grupie
-  sklep dodaj-osobe <e-mail>          dodaj osobę, która ma już konto
-  sklep usun-osobe <e-mail>
-  sklep zaproszenie [--dni 7]         kod zaproszenia + gotowa wiadomość
-  sklep wersje                        kto ma którą wersję
-  sklep nowa-grupa <nazwa>            nowa grupa (np. Testerzy)
-  sklep auto tak|nie                  nowe aplikacje dodają się same przy wydaniu
-  sklep zaufaj <sha256>               dodatkowy zaufany klucz podpisu
+  sklep przypisz <aplikacja> --grupa A,B   udostępnij aplikację grupom
+  sklep odepnij <aplikacja> --grupa A      zabierz aplikację grupie
+  sklep ustaw <aplikacja> [opcje]          nazwa, opis, kolejność, ikona, beta, ukrycie (wszędzie)
+  sklep usun <aplikacja> --na_pewno tak    usuń z biblioteki i wszystkich grup
+  sklep migruj                             jednorazowo: aplikacje z grup → biblioteka
+
+ Grupy i osoby
+  sklep nowa-grupa <nazwa> [--osoby a@x.pl,b@x.pl]
+  sklep usun-grupe <nazwa> --na_pewno tak
+  sklep uzytkownicy                        wszystkie konta i ich grupy
+  sklep dodaj-osobe <e-mail> --grupa A,B   dodaj osobę (musi mieć konto) do grup
+  sklep usun-osobe <e-mail> --grupa A
+  sklep osoby [--grupa A]                  kto jest w grupach
+  sklep zaproszenie --grupa A [--dni 7]    kod zaproszenia + gotowa wiadomość
+  sklep wersje [--grupa A]                 kto ma którą wersję
+  sklep auto tak|nie --grupa A             nowe wydania dodają się do grupy same (domyślnie nie)
+  sklep zaufaj <sha256> [--grupa A]        dodatkowy zaufany klucz podpisu
   sklep wyloguj
 
-Kilka grup? Dodaj --grupa NAZWA. <aplikacja> = fragment nazwy albo pakiet.`);
+<aplikacja> = fragment nazwy albo pakiet, np. zakupy. Nazwy z spacjami w cudzysłowie.`);
   },
 };
+
+// ------------------------------------------------------------------ pomocnicze (administrator)
+
+const ADMINS = ["82qeJdUO8qbzhniNK6bE6xUEovW2"]; // jak isAdmin w firebase/firestore.rules
+const isAdminUid = (uid) => ADMINS.includes(uid);
+
+async function requireAdmin() {
+  const { uid } = await session();
+  if (!isAdminUid(uid)) throw new Error("To polecenie jest tylko dla administratora sklepu.");
+}
+
+async function ownedGroups() {
+  const { uid } = await session();
+  return (await myGroups()).filter((g) => g.ownerId === uid);
+}
+
+/** "Domowa,Rodzice" -> grupy administratora (dopasowanie bez wielkości liter, też fragmentem). */
+async function groupsByNames(names, usage = "", { single = false } = {}) {
+  const owned = await ownedGroups();
+  if (!owned.length) throw new Error("Nie prowadzisz żadnej grupy. Utwórz: sklep nowa-grupa Rodzice");
+  if (!names) {
+    if (owned.length === 1) return owned;
+    throw new Error(`Podaj --grupa (${owned.map((g) => g.name).join(", ")})${usage ? ". Np.: sklep " + usage : ""}`);
+  }
+  const out = [];
+  for (const n of String(names).split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
+    const g = owned.find((x) => x.name.toLowerCase() === n) ?? owned.find((x) => x.name.toLowerCase().includes(n));
+    if (!g) throw new Error(`Nie ma grupy „${n}”. Twoje grupy: ${owned.map((x) => x.name).join(", ")}`);
+    if (!out.includes(g)) out.push(g);
+  }
+  if (single && out.length > 1) throw new Error(`Wybierz jedną grupę --grupa (${owned.map((g) => g.name).join(", ")})`);
+  return out;
+}
+
+async function libApp(query) {
+  await requireAdmin();
+  if (!query.trim()) throw new Error("Podaj aplikację (fragment nazwy albo pakiet).");
+  const lib = await listDocs("library");
+  const hit = findApps(lib, query);
+  if (!hit.length) throw new Error(`W bibliotece nie ma „${query}”. Lista: sklep aplikacje`);
+  if (hit.length > 1) throw new Error(`„${query}” pasuje do kilku: ${hit.map((a) => a.name).join(", ")} - doprecyzuj.`);
+  return hit[0];
+}
+
+/** Pola kopiowane z biblioteki do grup. */
+function copyFields(a) {
+  const out = {};
+  for (const k of ["name", "description", "packageName", "repo", "tagPrefix", "assetName", "iconUrl", "order", "prerelease", "hidden", "latest"]) {
+    if (a[k] !== undefined && a[k] !== null) out[k] = a[k];
+  }
+  return out;
+}
+
+/** Zmiany wpisu biblioteki trafiają do jego kopii we wszystkich grupach administratora. */
+async function syncCopies(app) {
+  let n = 0;
+  for (const g of await ownedGroups()) {
+    for (const c of (await listDocs(`groups/${g.id}/apps`)).filter((a) => a.packageName === app.packageName)) {
+      await update(c.path, copyFields(app));
+      n++;
+    }
+  }
+  return n;
+}
+
+async function assignmentMap(groups) {
+  const map = new Map();
+  for (const g of groups) {
+    for (const a of await listDocs(`groups/${g.id}/apps`)) map.set(a.packageName, [...(map.get(a.packageName) ?? []), g]);
+  }
+  return map;
+}
+
+/** Zaufane klucze z istniejących grup - nowa grupa dostaje te same. */
+async function sharedTrustedSigners() {
+  const all = new Set();
+  for (const g of await ownedGroups()) (g.trustedSigners ?? []).forEach((s) => all.add(s));
+  return [...all];
+}
+
+const sortApps = (apps) => apps.sort((a, b) => (a.order ?? 100) - (b.order ?? 100) || a.name.localeCompare(b.name));
+
+function appLine(a) {
+  const v = a.latest ? `${a.latest.versionName} (${a.latest.versionCode})` : "wersja z GitHuba";
+  return `${a.name.padEnd(22)} ${v.padEnd(16)} ${a.repo} ${a.tagPrefix}*${a.hidden ? "  [ukryta]" : ""}${a.prerelease ? "  [beta]" : ""}`;
+}
+
+
 commands.help = commands.pomoc;
 commands["usuń"] = commands.usun;
+commands["użytkownicy"] = commands.uzytkownicy;
+commands.uzytkownik = commands.uzytkownicy;
 
 const args = parseArgs(process.argv.slice(2));
 const cmd = args._.shift() ?? "status";

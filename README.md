@@ -30,8 +30,11 @@ Plan i decyzje: [PROJEKT.md](PROJEKT.md).
 - **Grupy** (`groups/{gid}`): administrator dodaje osoby po e-mailu albo daje im kod zaproszenia
   (ważny 7 dni, wiele użyć). Członek tylko widzi swoje grupy i ich aplikacje, nie może też sam
   z grupy wyjść (usuwa go administrator).
-- **Aplikacje** (`groups/{gid}/apps`): nazwa, repozytorium GitHub, prefiks tagów (`v` albo
-  `zakupy-v` w monorepo), nazwa pliku APK. Przycisk „Sprawdź na GitHubie” sam uzupełnia pakiet.
+- **Biblioteka** (`library/{pakiet}`, widzi tylko administrator): wszystkie aplikacje z nazwą,
+  repozytorium GitHub, prefiksem tagów (`v` albo `zakupy-v` w monorepo) i plikiem APK.
+  Każde wydanie przez wspólny workflow trafia tu samo.
+- **Przypisania**: grupa widzi tylko aplikacje, które administrator jej przypisał (kopie wpisów
+  w `groups/{gid}/apps`). W aplikacji: menu → Zarządzanie → Aplikacje / Grupy / Osoby (zaznaczanie).
 - **Wersje**: z pola `latest` zapisanego przez CI, a gdy go nie ma, z GitHub API
   (pamięć 15 minut i zapytania warunkowe, żeby nie przekroczyć 60 zapytań na godzinę).
 - **Instalacja**: pobranie tylko z GitHuba po HTTPS, kontrola SHA-256, kontrola pakietu i
@@ -57,17 +60,20 @@ hasło nie jest zapisywane. Polecenie działa przez te same reguły Firestore co
 
 | Polecenie | Co robi |
 |---|---|
-| `sklep status` | grupy, aplikacje, wersje |
-| `sklep dodaj grekot/EscapeRoom` | dodaje aplikację; pakiet, nazwę i plik odczytuje z ostatniego wydania |
-| `sklep dodaj grekot/T_rex_3 --prefiks zakupy-v` | to samo dla repozytorium z kilkoma aplikacjami |
+| `sklep status` | grupy, ich osoby i aplikacje, nieprzypisane aplikacje |
+| `sklep aplikacje` | cała biblioteka i grupy każdej aplikacji |
+| `sklep dodaj grekot/EscapeRoom` | dodaje aplikację do biblioteki; pakiet, nazwę i plik odczytuje z wydania |
+| `sklep przypisz zakupy --grupa Domowa,Rodzice` | udostępnia aplikację grupom (`odepnij` zabiera) |
+| `sklep nowa-grupa Rodzice --osoby zona@example.com` | nowa grupa z osobami |
+| `sklep uzytkownicy` | wszystkie konta i ich grupy |
+| `sklep dodaj-osobe ania@example.com --grupa Domowa` | dodaje osobę do grup (`usun-osobe` usuwa) |
 | `sklep ustaw zakupy --opis "…" --kolejnosc 1` | zmiana nazwy, opisu, kolejności, ikony, bety, ukrycia |
-| `sklep zaproszenie` | kod zaproszenia i gotowa wiadomość dla rodziny |
+| `sklep zaproszenie --grupa Domowa` | kod zaproszenia i gotowa wiadomość |
 | `sklep wersje` | kto ma którą wersję |
 | `sklep pomoc` | wszystkie polecenia |
 
-**Nowe aplikacje dodają się same.** Grupa ma włączone `autoAdd` (`sklep auto tak`), więc pierwsze
-wydanie nowej aplikacji przez wspólny workflow dopisuje ją do katalogu z nazwą z APK.
-Ręcznie trzeba dodać tylko aplikacje wydane, zanim grupa istniała.
+**Nowe aplikacje nie trafiają same do grup.** Wydanie dopisuje je tylko do biblioteki, a do grup
+przypisuje je administrator. Wyjątek: grupa z włączonym `autoAdd` (`sklep auto tak --grupa X`).
 
 ## Budowanie
 

@@ -1,7 +1,8 @@
 // Krok CI po opublikowaniu wydania (etap 2 i 3 sklepu rodzinnego):
-//  1. zapisuje najnowsze wydanie w polu `latest` każdej aplikacji o tym pakiecie
+//  1. dopisuje / aktualizuje aplikację w bibliotece administratora (library/{pakiet}),
+//  2. zapisuje najnowsze wydanie w polu `latest` jej kopii w grupach
 //     (groups/*/apps/* z packageName == pakiet z app.json) - sklep nie musi pytać GitHub API,
-//  2. wysyła powiadomienie FCM na temat app_<pakiet> (subskrybują go telefony z tą aplikacją w katalogu).
+//  3. wysyła powiadomienie FCM na temat app_<pakiet> (subskrybują go telefony z tą aplikacją w katalogu).
 //
 // Wejście (zmienne środowiskowe):
 //   FIREBASE_SERVICE_ACCOUNT  JSON konta usługi (sekret repozytorium); brak = krok pomijany
@@ -14,8 +15,8 @@
 //   APP_NAME                  (opcjonalnie) nazwa do powiadomienia, gdy pakietu nie ma w żadnej grupie
 //   GITHUB_REPOSITORY         repozytorium wydania (ustawia GitHub Actions) - do automatycznego dodania
 //
-// Automatyczne dodawanie: grupy z polem autoAdd == true, w których tej aplikacji jeszcze nie ma,
-// dostają ją od razu z nazwą z APK (app.json → appName). Sam sklep nie trafia do katalogu.
+// Do grup nowa aplikacja NIE trafia sama - przypisuje ją administrator. Wyjątek: grupy z polem
+// autoAdd == true (włączane wyraźnie: `sklep auto tak --grupa X`). Sam sklep nie trafia do katalogu.
 //   DRY_RUN                   "true" = tylko wypisz, co by zrobił
 import { readFileSync, existsSync } from "node:fs";
 
@@ -108,9 +109,33 @@ async function main() {
   initializeApp({ credential: cert(sa), projectId: sa.project_id });
   const db = getFirestore();
 
+  const stamped = () => ({ ...latest, publishedAt: Timestamp.fromDate(new Date(latest.publishedAt)) });
+  let appName = env.APP_NAME || latest.packageName;
+
+  // Biblioteka (library/{pakiet}): każda wydana aplikacja trafia tutaj. Do grup przypisuje ją
+  // administrator (sklep albo polecenie `sklep przypisz`) - chyba że grupa ma autoAdd.
+  if (latest.packageName !== SELF_PACKAGE && env.GITHUB_REPOSITORY) {
+    const ref = db.collection("library").doc(latest.packageName);
+    const snap = await ref.get();
+    if (snap.exists) {
+      appName = snap.get("name") || appName;
+      const prev = snap.get("latest");
+      if (!(prev && typeof prev.versionCode === "number" && prev.versionCode > latest.versionCode)) {
+        if (env.DRY_RUN === "true") console.log("DRY_RUN biblioteka: zapis wersji", latest.packageName);
+        else await ref.update({ latest: stamped(), updatedAt: Timestamp.now() });
+      }
+    } else {
+      const entry = buildCatalogEntry(appJson, env.GITHUB_REPOSITORY, env.APP_NAME);
+      appName = entry.name;
+      const data = { ...entry, latest: stamped(), createdAt: Timestamp.now(), updatedAt: Timestamp.now() };
+      if (env.DRY_RUN === "true") console.log("DRY_RUN biblioteka: nowa aplikacja", data);
+      else await ref.set(data);
+      console.log(`Nowa aplikacja „${entry.name}” w bibliotece - przypisz ją do grup w sklepie.`);
+    }
+  }
+
   // Kilka grup w praktyce - przechodzimy wszystkie (bez indeksu collectionGroup).
   const groups = await db.collection("groups").get();
-  let appName = env.APP_NAME || latest.packageName;
   let updated = 0;
   for (const g of groups.docs) {
     const apps = await g.ref.collection("apps").where("packageName", "==", latest.packageName).get();

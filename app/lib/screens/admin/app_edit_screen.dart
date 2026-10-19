@@ -2,15 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../../domain/models.dart';
 import '../../domain/release.dart';
+import '../../services/catalog_controller.dart';
 import '../../services/github_releases.dart';
-import '../../services/store_repository.dart';
 
-/// Dodawanie / edycja aplikacji w grupie.
+/// Aplikacja w bibliotece administratora: dane, źródło wydań i grupy, które ją widzą.
 class AppEditScreen extends StatefulWidget {
-  const AppEditScreen({super.key, required this.repo, required this.group, this.app});
+  const AppEditScreen({super.key, required this.controller, this.app});
 
-  final StoreRepository repo;
-  final StoreGroup group;
+  final CatalogController controller;
+
+  /// Wpis z biblioteki; null = nowa aplikacja.
   final StoreApp? app;
 
   @override
@@ -29,19 +30,33 @@ class _AppEditScreenState extends State<AppEditScreen> {
   late final _order = TextEditingController(text: '${widget.app?.order ?? 100}');
   late bool _prerelease = widget.app?.prerelease ?? false;
   late bool _hidden = widget.app?.hidden ?? false;
+  late final Set<String> _groups = widget.app == null
+      ? <String>{}
+      : widget.controller.groupsOfApp(widget.app!.packageName).map((g) => g.id).toSet();
 
   bool _checking = false;
   bool _saving = false;
   String? _checkResult;
   AppRelease? _found;
 
+  CatalogController get c => widget.controller;
+  bool get _isNew => widget.app == null;
+
   @override
   void dispose() {
-    for (final c in [_name, _description, _repo, _tagPrefix, _asset, _package, _icon, _order]) {
-      c.dispose();
+    for (final t in [_name, _description, _repo, _tagPrefix, _asset, _package, _icon, _order]) {
+      t.dispose();
     }
     super.dispose();
   }
+
+  Future<AppRelease?> _fetchRelease() => GithubReleases().latest(
+        repo: _repo.text.trim(),
+        tagPrefix: _tagPrefix.text.trim().isEmpty ? 'v' : _tagPrefix.text.trim(),
+        assetName: _asset.text.trim(),
+        includePrerelease: _prerelease,
+        force: true,
+      );
 
   Future<void> _check() async {
     setState(() {
@@ -50,13 +65,7 @@ class _AppEditScreenState extends State<AppEditScreen> {
       _found = null;
     });
     try {
-      final r = await GithubReleases().latest(
-        repo: _repo.text.trim(),
-        tagPrefix: _tagPrefix.text.trim().isEmpty ? 'v' : _tagPrefix.text.trim(),
-        assetName: _asset.text.trim(),
-        includePrerelease: _prerelease,
-        force: true,
-      );
+      final r = await _fetchRelease();
       if (r == null) {
         _checkResult = 'Nie znaleziono wydania z plikiem APK pasującego do prefiksu tagów.';
       } else {
@@ -64,10 +73,10 @@ class _AppEditScreenState extends State<AppEditScreen> {
         final apkName = Uri.parse(r.apkUrl).pathSegments.last;
         _checkResult = 'Znaleziono ${r.tag}: $apkName'
             '${r.versionCode != null ? ', versionCode ${r.versionCode}' : ''}'
-            '${r.packageName != null ? '\nPakiet: ${r.packageName}' : '\nBrak app.json - wpisz nazwę pakietu ręcznie.'}'
-            '${r.signerSha256 != null ? '\nPodpis: ${r.signerSha256!.substring(0, 16)}…' : ''}';
+            '${r.packageName != null ? '\nPakiet: ${r.packageName}' : '\nBrak app.json - wpisz nazwę pakietu ręcznie.'}';
         if (_package.text.trim().isEmpty && r.packageName != null) _package.text = r.packageName!;
         if (_asset.text.trim().isEmpty) _asset.text = apkName.replaceFirst(RegExp(r'\.apk$', caseSensitive: false), '');
+        if (_name.text.trim().isEmpty) _name.text = _repo.text.split('/').last;
       }
     } catch (e) {
       _checkResult = '$e';
@@ -80,22 +89,28 @@ class _AppEditScreenState extends State<AppEditScreen> {
     if (!_form.currentState!.validate()) return;
     setState(() => _saving = true);
     try {
-      await widget.repo.saveApp(
-        widget.group.id,
-        StoreApp(
-          id: widget.app?.id ?? '',
-          name: _name.text,
-          description: _description.text,
-          packageName: _package.text,
-          repo: _repo.text,
-          tagPrefix: _tagPrefix.text,
-          assetName: _asset.text,
-          iconUrl: _icon.text,
-          order: int.tryParse(_order.text.trim()) ?? 100,
-          prerelease: _prerelease,
-          hidden: _hidden,
-        ),
+      // Nowa aplikacja (albo zmienione źródło) - pobierz wersję, żeby od razu było co instalować.
+      var latest = _found;
+      if (latest == null && (_isNew || widget.app?.latest == null)) {
+        latest = await _fetchRelease().catchError((_) => null);
+      }
+      final app = StoreApp(
+        id: _package.text.trim(),
+        name: _name.text,
+        description: _description.text,
+        packageName: _package.text,
+        repo: _repo.text,
+        tagPrefix: _tagPrefix.text,
+        assetName: _asset.text,
+        iconUrl: _icon.text,
+        order: int.tryParse(_order.text.trim()) ?? 100,
+        prerelease: _prerelease,
+        hidden: _hidden,
+        latest: widget.app?.latest,
       );
+      final owned = c.ownedGroups;
+      await c.repo.saveLibraryApp(app, owned, latest: latest);
+      await c.repo.setAppGroups(latest == null ? app : app.copyWith(latest: latest), _groups, owned);
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
@@ -111,8 +126,8 @@ class _AppEditScreenState extends State<AppEditScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Usunąć „${app.name}” z grupy?'),
-        content: const Text('Zniknie z katalogu członków. Zainstalowane kopie zostaną na telefonach.'),
+        title: Text('Usunąć „${app.name}”?'),
+        content: const Text('Zniknie z biblioteki i ze wszystkich grup. Zainstalowane kopie zostaną na telefonach.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Anuluj')),
           FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Usuń')),
@@ -120,23 +135,38 @@ class _AppEditScreenState extends State<AppEditScreen> {
       ),
     );
     if (ok != true) return;
-    await widget.repo.deleteApp(widget.group.id, app.id);
+    await c.repo.deleteLibraryApp(app.packageName, c.ownedGroups);
     if (mounted) Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
     String? required(String? v) => (v ?? '').trim().isEmpty ? 'Wymagane' : null;
+    final theme = Theme.of(context);
+    final owned = c.ownedGroups;
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.app == null ? 'Nowa aplikacja' : 'Edycja aplikacji'),
+        title: Text(_isNew ? 'Nowa aplikacja' : widget.app!.name),
         actions: [
-          if (widget.app != null) IconButton(tooltip: 'Usuń', onPressed: _delete, icon: const Icon(Icons.delete_outline)),
+          if (!_isNew) IconButton(tooltip: 'Usuń', onPressed: _delete, icon: const Icon(Icons.delete_outline)),
         ],
       ),
       body: Form(
         key: _form,
         child: ListView(padding: const EdgeInsets.all(16), children: [
+          Text('Kto ją widzi', style: theme.textTheme.titleSmall),
+          if (owned.isEmpty)
+            const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Text('Nie masz jeszcze grup.'))
+          else
+            for (final g in owned)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _groups.contains(g.id),
+                onChanged: (v) => setState(() => v == true ? _groups.add(g.id) : _groups.remove(g.id)),
+                title: Text(g.name),
+                subtitle: Text('osób: ${g.members.length}'),
+              ),
+          const Divider(height: 32),
           TextFormField(
             controller: _name,
             decoration: const InputDecoration(labelText: 'Nazwa', border: OutlineInputBorder()),
@@ -150,7 +180,7 @@ class _AppEditScreenState extends State<AppEditScreen> {
             decoration: const InputDecoration(labelText: 'Opis (opcjonalnie)', border: OutlineInputBorder()),
           ),
           const SizedBox(height: 20),
-          Text('Skąd brać wydania', style: Theme.of(context).textTheme.titleSmall),
+          Text('Skąd brać wydania', style: theme.textTheme.titleSmall),
           const SizedBox(height: 8),
           TextFormField(
             controller: _repo,
@@ -179,7 +209,7 @@ class _AppEditScreenState extends State<AppEditScreen> {
                 controller: _asset,
                 decoration: const InputDecoration(
                   labelText: 'Plik APK',
-                  helperText: 'bez .apk, np. zakupy',
+                  helperText: 'bez .apk (puste = pierwszy)',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -199,14 +229,12 @@ class _AppEditScreenState extends State<AppEditScreen> {
           if (_checkResult != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                _checkResult!,
-                style: TextStyle(color: _found == null ? Theme.of(context).colorScheme.error : null),
-              ),
+              child: Text(_checkResult!, style: TextStyle(color: _found == null ? theme.colorScheme.error : null)),
             ),
           const SizedBox(height: 16),
           TextFormField(
             controller: _package,
+            enabled: _isNew,
             decoration: const InputDecoration(
               labelText: 'Nazwa pakietu Androida',
               hintText: 'pl.grekot.zakupy',
@@ -233,14 +261,13 @@ class _AppEditScreenState extends State<AppEditScreen> {
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Wersje testowe (pre-release)'),
-            subtitle: const Text('Członkowie tej grupy dostają też wydania oznaczone jako pre-release'),
             value: _prerelease,
             onChanged: (v) => setState(() => _prerelease = v),
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Ukryta'),
-            subtitle: const Text('Widzisz ją tylko Ty'),
+            subtitle: const Text('Nie pokazuj członkom grup (widzisz ją tylko Ty)'),
             value: _hidden,
             onChanged: (v) => setState(() => _hidden = v),
           ),

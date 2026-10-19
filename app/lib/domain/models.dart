@@ -12,6 +12,7 @@ class StoreGroup {
     required this.members,
     required this.memberEmails,
     this.trustedSigners = const [],
+    this.autoAdd = false,
   });
 
   final String id;
@@ -23,6 +24,9 @@ class StoreGroup {
   /// Odciski SHA-256 kluczy, którymi mogą być podpisane instalowane APK
   /// (oprócz klucza samego sklepu).
   final List<String> trustedSigners;
+
+  /// Nowe wydania dopisują się do tej grupy same (włączane wyraźnie: sklep auto tak).
+  final bool autoAdd;
 
   bool isOwner(String uid) => ownerId == uid;
   String get ownerEmail => memberEmails[ownerId] ?? '';
@@ -38,6 +42,7 @@ class StoreGroup {
           ? (d['memberEmails'] as Map).map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''))
           : const {},
       trustedSigners: ((d['trustedSigners'] as List?) ?? const []).whereType<String>().toList(),
+      autoAdd: d['autoAdd'] == true,
     );
   }
 }
@@ -230,4 +235,12 @@ class InstallReport {
       updatedAt: t is Timestamp ? t.toDate() : null,
     );
   }
+}
+
+/// Konto z książki adresowej `emails` (wspólnej z Zakupami i Powrotem).
+class UserAccount {
+  const UserAccount({required this.uid, required this.email});
+
+  final String uid;
+  final String email;
 }

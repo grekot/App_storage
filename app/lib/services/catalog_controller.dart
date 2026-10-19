@@ -136,6 +136,19 @@ class CatalogController extends ChangeNotifier with WidgetsBindingObserver {
   /// Administrator sklepu (StoreConfig.adminUids) - jedyny, kto widzi zarządzanie.
   bool get isAdmin => StoreConfig.isAdmin(repo.uid);
 
+  /// Grupy prowadzone przez zalogowanego (administratora).
+  List<StoreGroup> get ownedGroups => groups.where((g) => g.isOwner(repo.uid)).toList();
+
+  /// Aplikacje przypisane do grupy (kopie z biblioteki), z aktywnych subskrypcji.
+  List<StoreApp> appsInGroup(String gid) => _appsByGroup[gid] ?? const [];
+
+  /// Grupy (prowadzone), do których przypisano pakiet.
+  List<StoreGroup> groupsOfApp(String packageName) =>
+      ownedGroups.where((g) => appsInGroup(g.id).any((a) => a.packageName == packageName)).toList();
+
+  /// Klucze zaufane we wszystkich prowadzonych grupach - dla nowej grupy.
+  Set<String> get allTrustedSigners => {for (final g in ownedGroups) ...g.trustedSigners};
+
   int get updatesCount => _entries.values.where((e) => e.status == AppStatus.updateAvailable).length;
 
   // ------------------------------------------------------------------ start / odświeżanie

@@ -250,6 +250,29 @@ describe("kto ma którą wersję", () => {
   });
 });
 
+describe("biblioteka i lista kont (tylko administrator)", () => {
+  const lib = { name: "Zakupy", packageName: "pl.grekot.zakupy", repo: "grekot/T_rex_3", tagPrefix: "zakupy-v" };
+
+  test("biblioteka: administrator czyta i zapisuje, inni nie", async () => {
+    await assertSucceeds(setDoc(doc(db(OWNER), "library/pl.grekot.zakupy"), lib));
+    await assertSucceeds(getDocs(collection(db(OWNER), "library")));
+    await assertFails(getDocs(collection(db(MEMBER), "library")));
+    await assertFails(getDoc(doc(db(MEMBER), "library/pl.grekot.zakupy")));
+    await assertFails(setDoc(doc(db(MEMBER), "library/pl.x.y"), { ...lib, packageName: "pl.x.y" }));
+    await assertFails(setDoc(doc(db(OWNER), "library/inna.nazwa"), lib)); // id = pakiet
+    await assertSucceeds(deleteDoc(doc(db(OWNER), "library/pl.grekot.zakupy")));
+  });
+
+  test("lista kont: administrator tak, inni tylko pojedynczy wpis", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `emails/${MEMBER.email}`), { uid: MEMBER.uid, email: MEMBER.email });
+    });
+    await assertSucceeds(getDocs(collection(db(OWNER), "emails")));
+    await assertFails(getDocs(collection(db(MEMBER), "emails")));
+    await assertSucceeds(getDoc(doc(db(NEW), `emails/${MEMBER.email}`)));
+  });
+});
+
 describe("Zakupy i Powrót bez zmian", () => {
   test("własna lista i książka adresowa", async () => {
     await assertSucceeds(

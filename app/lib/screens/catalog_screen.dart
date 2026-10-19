@@ -4,6 +4,7 @@ import '../domain/versions.dart';
 import '../services/catalog_controller.dart';
 import '../widgets/app_actions.dart';
 import '../widgets/app_icon.dart';
+import 'admin/admin_screen.dart';
 import 'admin/groups_screen.dart';
 import 'app_details_screen.dart';
 import 'join_screen.dart';
@@ -71,12 +72,12 @@ class _CatalogScreenState extends State<CatalogScreen> with WidgetsBindingObserv
               PopupMenuButton<String>(
                 onSelected: (v) => switch (v) {
                   'join' => _open(JoinScreen(controller: c)),
-                  'admin' => _open(GroupsScreen(controller: c)),
+                  'admin' => _open(c.isAdmin ? AdminScreen(controller: c) : GroupsScreen(controller: c)),
                   _ => _open(SettingsScreen(controller: c)),
                 },
                 itemBuilder: (_) => [
                   const PopupMenuItem(value: 'join', child: Text('Dołącz kodem zaproszenia')),
-                  PopupMenuItem(value: 'admin', child: Text(c.isAdmin ? 'Grupy i aplikacje' : 'Moje grupy')),
+                  PopupMenuItem(value: 'admin', child: Text(c.isAdmin ? 'Zarządzanie' : 'Moje grupy')),
                   const PopupMenuItem(value: 'settings', child: Text('Ustawienia')),
                 ],
               ),
@@ -109,7 +110,7 @@ class _CatalogScreenState extends State<CatalogScreen> with WidgetsBindingObserv
                   _Empty(
                     icon: Icons.apps_outlined,
                     text: c.isAdmin
-                        ?'Nie ma jeszcze aplikacji. Dodaj je w menu: Grupy i aplikacje.'
+                        ? 'Nie ma jeszcze aplikacji w Twoich grupach. Przypisz je w menu: Zarządzanie.'
                         : 'Nie ma jeszcze aplikacji w Twoich grupach.',
                   )
                 else ...[

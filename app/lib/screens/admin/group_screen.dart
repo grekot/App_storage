@@ -9,7 +9,7 @@ import '../../services/catalog_controller.dart';
 import '../../services/store_repository.dart';
 import '../../widgets/app_actions.dart';
 import '../../widgets/app_icon.dart';
-import 'app_edit_screen.dart';
+import '../../widgets/pickers.dart';
 
 /// Grupa: aplikacje, osoby, zaproszenia, wersje u osób, zaufane klucze.
 /// Właściciel edytuje wszystko; członek widzi skład grupy i może z niej wyjść.
@@ -165,45 +165,69 @@ class _AppsTab extends StatelessWidget {
   final CatalogController controller;
   final StoreGroup group;
 
-  void _edit(BuildContext context, [StoreApp? app]) => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => AppEditScreen(repo: controller.repo, group: group, app: app),
-      ));
+  /// Wybór aplikacji z biblioteki, które widzi ta grupa.
+  Future<void> _pick(BuildContext context, List<StoreApp> current) async {
+    final lib = await controller.repo.watchLibrary().first;
+    if (!context.mounted) return;
+    final chosen = await showPicker(
+      context,
+      title: 'Aplikacje w „${group.name}”',
+      hint: 'Zaznacz aplikacje z biblioteki, które ma widzieć ta grupa.',
+      emptyText: 'Biblioteka jest pusta - dodaj aplikację w Zarządzanie → Aplikacje.',
+      items: [
+        for (final a in lib)
+          PickItem(
+            id: a.packageName,
+            title: a.name,
+            subtitle: a.latest?.versionName,
+            leading: AppIcon(name: a.name, url: a.iconUrl.isNotEmpty ? a.iconUrl : a.latest?.iconUrl, size: 36),
+          ),
+      ],
+      selected: current.map((a) => a.packageName).toSet(),
+    );
+    if (chosen == null) return;
+    for (final a in lib) {
+      final inside = current.any((x) => x.packageName == a.packageName);
+      if (chosen.contains(a.packageName) && !inside) await controller.repo.assignApp(group.id, a);
+      if (!chosen.contains(a.packageName) && inside) await controller.repo.unassignApp(group.id, a.packageName);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _edit(context),
-        icon: const Icon(Icons.add),
-        label: const Text('Dodaj aplikację'),
-      ),
-      body: StreamBuilder<List<StoreApp>>(
-        stream: controller.repo.watchApps(group.id),
-        builder: (context, snap) {
-          final apps = snap.data ?? const <StoreApp>[];
-          if (apps.isEmpty) {
-            return const Padding(
-              padding: EdgeInsets.all(32),
-              child: Text(
-                'Dodaj aplikację: nazwa, repozytorium GitHub z wydaniami (np. grekot/EscapeRoom) '
-                'i nazwa pakietu. Członkowie grupy od razu zobaczą ją w katalogu.',
-                textAlign: TextAlign.center,
-              ),
-            );
-          }
-          return ListView(padding: const EdgeInsets.only(bottom: 88), children: [
-            for (final a in apps)
-              ListTile(
-                leading: AppIcon(name: a.name, url: a.iconUrl.isEmpty ? controller.entry(a.packageName)?.iconUrl : a.iconUrl),
-                title: Text(a.name + (a.hidden ? ' (ukryta)' : '')),
-                subtitle: Text('${a.repo} · ${a.tagPrefix}*'
-                    '${a.latest != null ? ' · CI: ${a.latest!.versionName}' : ''}'),
-                trailing: const Icon(Icons.edit_outlined),
-                onTap: () => _edit(context, a),
-              ),
-          ]);
-        },
-      ),
+    return StreamBuilder<List<StoreApp>>(
+      stream: controller.repo.watchApps(group.id),
+      builder: (context, snap) {
+        final apps = snap.data ?? const <StoreApp>[];
+        return Scaffold(
+          floatingActionButton: FloatingActionButton.extended(
+            heroTag: 'apps-${group.id}',
+            onPressed: () => _pick(context, apps),
+            icon: const Icon(Icons.checklist),
+            label: const Text('Wybierz aplikacje'),
+          ),
+          body: apps.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Text('Ta grupa nie ma jeszcze aplikacji. Stuknij „Wybierz aplikacje”.',
+                      textAlign: TextAlign.center),
+                )
+              : ListView(padding: const EdgeInsets.only(bottom: 88), children: [
+                  for (final a in apps)
+                    ListTile(
+                      leading: AppIcon(
+                          name: a.name, url: a.iconUrl.isEmpty ? controller.entry(a.packageName)?.iconUrl : a.iconUrl),
+                      title: Text(a.name + (a.hidden ? ' (ukryta)' : '')),
+                      subtitle: Text(a.latest != null ? a.latest!.versionName : a.repo),
+                      trailing: IconButton(
+                        tooltip: 'Zabierz tej grupie',
+                        icon: const Icon(Icons.remove_circle_outline),
+                        onPressed: () => controller.repo.unassignApp(group.id, a.packageName),
+                      ),
+                    ),
+                ]),
+        );
+      },
     );
   }
 }
@@ -215,7 +239,27 @@ class _MembersTab extends StatelessWidget {
   final StoreRepository repo;
   final StoreGroup group;
 
-  Future<void> _add(BuildContext context) async {
+  /// Wybór osób ze wszystkich kont (Zakupy, Powrót, Sklep).
+  Future<void> _pick(BuildContext context) async {
+    final users = await repo.watchUsers().first;
+    if (!context.mounted) return;
+    final chosen = await showPicker(
+      context,
+      title: 'Osoby w „${group.name}”',
+      hint: 'Zaznacz osoby, które mają widzieć aplikacje tej grupy.',
+      emptyText: 'Brak kont. Osoba musi najpierw zainstalować sklep i założyć konto.',
+      items: [for (final u in users) PickItem(id: u.uid, title: u.email, locked: u.uid == group.ownerId)],
+      selected: group.members.toSet(),
+    );
+    if (chosen == null) return;
+    for (final u in users) {
+      final inside = group.members.contains(u.uid);
+      if (u.uid == group.ownerId || chosen.contains(u.uid) == inside) continue;
+      await repo.setUserGroups(u, chosen.contains(u.uid) ? {group.id} : {}, [group]);
+    }
+  }
+
+  Future<void> _addByEmail(BuildContext context) async {
     final email = await askForName(context, title: 'Dodaj osobę po e-mailu', hint: 'adres e-mail konta');
     if (email == null) return;
     final r = await repo.addMemberByEmail(group, email);
@@ -235,16 +279,17 @@ class _MembersTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _add(context),
-        icon: const Icon(Icons.person_add_alt),
-        label: const Text('Dodaj osobę'),
+        heroTag: 'members-${group.id}',
+        onPressed: () => _pick(context),
+        icon: const Icon(Icons.checklist),
+        label: const Text('Wybierz osoby'),
       ),
       body: ListView(padding: const EdgeInsets.only(bottom: 88), children: [
         for (final uid in group.members)
           ListTile(
             leading: Icon(uid == group.ownerId ? Icons.admin_panel_settings_outlined : Icons.person_outline),
             title: Text(group.memberEmails[uid] ?? uid),
-            subtitle: uid == group.ownerId ? const Text('Właściciel') : null,
+            subtitle: uid == group.ownerId ? const Text('Administrator') : null,
             trailing: uid == group.ownerId
                 ? null
                 : IconButton(
@@ -257,6 +302,11 @@ class _MembersTab extends StatelessWidget {
                     },
                   ),
           ),
+        ListTile(
+          leading: const Icon(Icons.alternate_email),
+          title: const Text('Dodaj po e-mailu'),
+          onTap: () => _addByEmail(context),
+        ),
       ]),
     );
   }

@@ -71,6 +71,8 @@ service cloud.firestore {
     // (bez przeglądania listy kont). Każdy zapisuje wyłącznie własny e-mail.
     match /emails/{email} {
       allow get: if signedIn();
+      // Administrator sklepu widzi listę wszystkich kont, żeby przypisywać osoby do grup.
+      allow list: if isAdmin();
       allow create, update: if signedIn()
         && request.resource.data.uid == request.auth.uid
         && email == request.auth.token.email.lower();
@@ -201,6 +203,16 @@ service cloud.firestore {
 
     // Zaproszenia: odczyt pojedynczego kodu każdy zalogowany (trzeba znać kod),
     // lista tylko własnych; tworzy właściciel grupy, ważność najwyżej 31 dni.
+    // Biblioteka wszystkich aplikacji (library/{pakiet}) - widzi i zmienia tylko administrator.
+    // Do grup trafiają kopie wpisów (groups/{gid}/apps) - przypisuje je administrator.
+    // Nowe wydania dopisuje tu CI kontem usługi (omija reguły).
+    match /library/{appId} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() && validApp(request.resource.data)
+        && request.resource.data.packageName == appId;
+      allow delete: if isAdmin();
+    }
+
     match /invites/{code} {
       allow get: if signedIn();
       allow list: if signedIn() && resource.data.createdBy == request.auth.uid;
