@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// PEŁNE reguły projektu Firebase zakupy-8ec54 = Zakupy + Powrót + Sklep rodzinny.
+// PEŁNE reguły projektu Firebase zakupy-8ec54 = Zakupy + Powrót + Korona + Sklep rodzinny.
 // Firestore ma jeden zestaw reguł na bazę: publikuj TEN plik (zastępuje T_rex_3/lista-zakupow/firebase/firestore.rules).
 // Testy: firebase/test (npm test - emulator).
 //
@@ -20,6 +20,10 @@ rules_version = '2';
 //   emails/{email}                 e-mail -> uid (do dodawania znajomych po e-mailu)
 //   users/{uid}/friends/{uid}      znajomi danej osoby
 //   places/{placeId}               zapisane miejsca z aplikacji Powrót (np. gdzie stoi auto)
+//
+// Korona (T_rex_3/korona/SYNC.md):
+//   korona/{uid}                   zdobyte szczyty: climbs{}, custom{}, updatedAt, v - zapisuje
+//                                  zegarek (Side Service), telefon czyta; tylko właściciel
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -65,6 +69,18 @@ service cloud.firestore {
         && validPlace(request.resource.data);
       allow update: if signedIn() && validMembersChange() && validPlace(request.resource.data);
       allow delete: if signedIn() && request.auth.uid == resource.data.ownerId;
+    }
+
+    // Korona - zdobycia jednej osoby; dokument o id = uid, widzi i zmienia tylko właściciel
+    function validKorona(data) {
+      return (!('climbs' in data) || data.climbs is map)
+        && (!('custom' in data) || data.custom is map)
+        && (!('v' in data) || data.v is number);
+    }
+
+    match /korona/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid && validKorona(request.resource.data);
     }
 
     // Książka adresowa: można odczytać tylko pojedynczy wpis znając dokładny e-mail
