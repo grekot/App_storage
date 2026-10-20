@@ -75,6 +75,7 @@ Gdzie co ustawić:
 | `grekot/GPS_RTK` | 4 × `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` |
 | `grekot/T_rex_3` | 4 × jak wyżej + `FIREBASE_OPTIONS_ZAKUPY_B64` (base64 pliku `lista-zakupow/phone/lib/firebase_options.dart`) |
 | `grekot/T_rex_3` (później) | `FIREBASE_OPTIONS_POWROT_B64` – gdy Powrót dostanie prawdziwą konfigurację (`node tools/configure.mjs`); dziś jego plik to zaślepka |
+| `grekot/T_rex_3` (Korona) | `FIREBASE_OPTIONS_KORONA_B64` – base64 `korona/phone/lib/firebase_options.dart` (po dodaniu `pl.grekot.korona` w Firebase i `node tools/configure.mjs` w `korona/phone`) |
 | `grekot/App_storage` | 4 × `KEYSTORE_*`/`KEY_*` + `FIREBASE_OPTIONS_SKLEP_B64` (base64 `app/lib/firebase_options.dart` sklepu) |
 | wszystkie cztery | `FIREBASE_SERVICE_ACCOUNT` – JSON konta usługi Firebase: zapis nowej wersji w katalogu sklepu i powiadomienie push (opis: `firebase/KONFIGURACJA.md`, pkt 4). Bez niego wydania działają, tylko bez powiadomień |
 
@@ -129,6 +130,7 @@ jest w `.gitignore` i nie trafiła do commita; w CI odtwarza ją sekret.
 | GPS_RTK | `v1.0.17` (ostatni: `v1.0.16`) | |
 | T_rex_3 | `zakupy-v1.0.1` | wersja = tag bez `zakupy-v` |
 | T_rex_3 | `powrot-v1.0.1` | najlepiej dopiero po skonfigurowaniu Firebase w Powrocie |
+| T_rex_3 | `korona-v1.0.0` | po sekrecie `FIREBASE_OPTIONS_KORONA_B64` i publikacji reguł z blokiem `korona` |
 
 ```bash
 git -C /c/TMP/My_GIT/GPS_RTK tag v1.0.17
