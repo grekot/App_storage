@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// PEŁNE reguły projektu Firebase zakupy-8ec54 = Zakupy + Powrót + Korona + Sklep rodzinny.
+// PEŁNE reguły projektu Firebase zakupy-8ec54 = Zakupy + Powrót + Na szczycie + Sklep rodzinny.
 // Firestore ma jeden zestaw reguł na bazę: publikuj TEN plik (zastępuje T_rex_3/lista-zakupow/firebase/firestore.rules).
 // Testy: firebase/test (npm test - emulator).
 //
@@ -21,7 +21,7 @@ rules_version = '2';
 //   users/{uid}/friends/{uid}      znajomi danej osoby
 //   places/{placeId}               zapisane miejsca z aplikacji Powrót (np. gdzie stoi auto)
 //
-// Korona (T_rex_3/korona/SYNC.md):
+// Na szczycie (T_rex_3/korona/SYNC.md; kolekcja nazywa się korona):
 //   korona/{uid}                   zdobyte szczyty: climbs{}, custom{}, updatedAt, v - zapisuje
 //                                  zegarek (Side Service), telefon czyta; tylko właściciel
 service cloud.firestore {
@@ -71,7 +71,7 @@ service cloud.firestore {
       allow delete: if signedIn() && request.auth.uid == resource.data.ownerId;
     }
 
-    // Korona - zdobycia jednej osoby; dokument o id = uid, widzi i zmienia tylko właściciel
+    // Na szczycie - zdobycia jednej osoby; dokument o id = uid, widzi i zmienia tylko właściciel
     function validKorona(data) {
       return (!('climbs' in data) || data.climbs is map)
         && (!('custom' in data) || data.custom is map)

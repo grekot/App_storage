@@ -286,7 +286,7 @@ describe("Zakupy i Powrót bez zmian", () => {
   });
 });
 
-describe("Korona", () => {
+describe("Na szczycie (korona/{uid})", () => {
   const climbs = {
     climbs: { rysy: { d: "2024-07-15", gps: true } },
     custom: { c1: { name: "Gęsia Szyja", lat: 49.26, lon: 20.08, d: "2025-06-01", gps: false } },
