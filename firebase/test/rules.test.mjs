@@ -285,3 +285,29 @@ describe("Zakupy i Powrót bez zmian", () => {
     await assertFails(setDoc(doc(db(MEMBER), `emails/${OUTSIDER.email}`), { uid: MEMBER.uid, email: OUTSIDER.email }));
   });
 });
+
+describe("Na szczycie (korona/{uid})", () => {
+  const climbs = {
+    climbs: { rysy: { d: "2024-07-15", gps: true } },
+    custom: { c1: { name: "Gęsia Szyja", lat: 49.26, lon: 20.08, d: "2025-06-01", gps: false } },
+    updatedAt: serverTimestamp(),
+    v: 1,
+  };
+
+  test("właściciel zapisuje i czyta swój dokument, inni nie", async () => {
+    await assertSucceeds(setDoc(doc(db(MEMBER), `korona/${MEMBER.uid}`), climbs));
+    await assertSucceeds(getDoc(doc(db(MEMBER), `korona/${MEMBER.uid}`)));
+    await assertSucceeds(updateDoc(doc(db(MEMBER), `korona/${MEMBER.uid}`), { "climbs.babia": { d: "2025-01-02", gps: false } }));
+    await assertFails(getDoc(doc(db(OUTSIDER), `korona/${MEMBER.uid}`)));
+    await assertFails(setDoc(doc(db(OUTSIDER), `korona/${MEMBER.uid}`), climbs));
+    await assertFails(getDocs(collection(db(OUTSIDER), "korona")));
+    await assertFails(deleteDoc(doc(db(OUTSIDER), `korona/${MEMBER.uid}`)));
+    await assertSucceeds(deleteDoc(doc(db(MEMBER), `korona/${MEMBER.uid}`)));
+  });
+
+  test("climbs i custom muszą być mapami", async () => {
+    await assertFails(setDoc(doc(db(MEMBER), `korona/${MEMBER.uid}`), { ...climbs, climbs: ["rysy"] }));
+    await assertFails(setDoc(doc(db(MEMBER), `korona/${MEMBER.uid}`), { ...climbs, custom: "x" }));
+    await assertSucceeds(setDoc(doc(db(MEMBER), `korona/${MEMBER.uid}`), { climbs: {}, custom: {}, v: 1.0 }));
+  });
+});

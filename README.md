@@ -121,6 +121,7 @@ na `C:\TMP\jtmp`.
    | GPS RTK | `grekot/GPS_RTK` | `v` | `gps_rtk` | `pl.gpsrtk.gps_rtk_app` |
    | Zakupy | `grekot/T_rex_3` | `zakupy-v` | `zakupy` | `pl.grekot.zakupy` |
    | Powrót | `grekot/T_rex_3` | `powrot-v` | `powrot` | `pl.grekot.powrot` |
+   | Na szczycie | `grekot/T_rex_3` | `naszczycie-v` | `naszczycie` | `pl.grekot.naszczycie` |
 
 6. **Rodzina**: zakładka Zaproszenia → Nowy kod → „Kopiuj wiadomość” i wysłać.
 
