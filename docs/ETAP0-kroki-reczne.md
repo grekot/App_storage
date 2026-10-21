@@ -130,7 +130,7 @@ jest w `.gitignore` i nie trafiła do commita; w CI odtwarza ją sekret.
 | GPS_RTK | `v1.0.17` (ostatni: `v1.0.16`) | |
 | T_rex_3 | `zakupy-v1.0.1` | wersja = tag bez `zakupy-v` |
 | T_rex_3 | `powrot-v1.0.1` | najlepiej dopiero po skonfigurowaniu Firebase w Powrocie |
-| T_rex_3 | `naszczycie-v1.0.0` | po sekrecie `FIREBASE_OPTIONS_KORONA_B64` i publikacji reguł z blokiem `korona` |
+| T_rex_3 | `naszczycie-v1.0.0` | po sekrecie `FIREBASE_OPTIONS_NASZCZYCIE_B64` i publikacji reguł z blokiem `korona` |
 
 ```bash
 git -C /c/TMP/My_GIT/GPS_RTK tag v1.0.17
