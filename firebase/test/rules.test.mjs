@@ -311,3 +311,34 @@ describe("Na szczycie (korona/{uid})", () => {
     await assertSucceeds(setDoc(doc(db(MEMBER), `korona/${MEMBER.uid}`), { climbs: {}, custom: {}, v: 1.0 }));
   });
 });
+
+describe("Waga (waga/{uid})", () => {
+  const weights = {
+    e: { "2026-10-23": { w: 823, t: 1761200000000 }, "2026-10-22": { w: 0, t: 1761100000000 } },
+    goal: 780,
+    updatedAt: serverTimestamp(),
+    v: 1,
+  };
+
+  test("właściciel zapisuje i czyta swój dokument, inni nie", async () => {
+    await assertSucceeds(setDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`), weights));
+    await assertSucceeds(getDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`)));
+    // telefon: set z merge zmienia jeden dzień
+    await assertSucceeds(
+      setDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`), { e: { "2026-10-24": { w: 821, t: 1 } }, v: 1 }, { merge: true })
+    );
+    await assertSucceeds(updateDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`), { goal: deleteField() }));
+    await assertFails(getDoc(doc(db(OUTSIDER), `waga/${MEMBER.uid}`)));
+    await assertFails(setDoc(doc(db(OUTSIDER), `waga/${MEMBER.uid}`), weights));
+    await assertFails(getDocs(collection(db(OUTSIDER), "waga")));
+    await assertFails(deleteDoc(doc(db(OUTSIDER), `waga/${MEMBER.uid}`)));
+    await assertSucceeds(deleteDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`)));
+  });
+
+  test("e musi być mapą, goal i v liczbami", async () => {
+    await assertFails(setDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`), { ...weights, e: [823] }));
+    await assertFails(setDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`), { ...weights, goal: "78" }));
+    await assertFails(setDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`), { ...weights, v: "1" }));
+    await assertSucceeds(setDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`), { e: {}, v: 1 }));
+  });
+});

@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// PEŁNE reguły projektu Firebase zakupy-8ec54 = Zakupy + Powrót + Na szczycie + Sklep rodzinny.
+// PEŁNE reguły projektu Firebase zakupy-8ec54 = Zakupy + Powrót + Na szczycie + Waga + Sklep rodzinny.
 // Firestore ma jeden zestaw reguł na bazę: publikuj TEN plik (zastępuje T_rex_3/lista-zakupow/firebase/firestore.rules).
 // Testy: firebase/test (npm test - emulator).
 //
@@ -24,6 +24,10 @@ rules_version = '2';
 // Na szczycie (T_rex_3/korona/SYNC.md; kolekcja nazywa się korona):
 //   korona/{uid}                   zdobyte szczyty: climbs{}, custom{}, updatedAt, v - zapisuje
 //                                  zegarek (Side Service), telefon czyta; tylko właściciel
+//
+// Waga (T_rex_3/waga/SYNC.md):
+//   waga/{uid}                     pomiary wagi: e{"RRRR-MM-DD": {w, t}}, goal, updatedAt, v -
+//                                  zapisują zegarek (Side Service) i telefon; tylko właściciel
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -81,6 +85,17 @@ service cloud.firestore {
     match /korona/{uid} {
       allow read, delete: if signedIn() && request.auth.uid == uid;
       allow create, update: if signedIn() && request.auth.uid == uid && validKorona(request.resource.data);
+    }
+
+    function validWaga(data) {
+      return (!('e' in data) || data.e is map)
+        && (!('goal' in data) || data.goal is number)
+        && (!('v' in data) || data.v is number);
+    }
+
+    match /waga/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid && validWaga(request.resource.data);
     }
 
     // Książka adresowa: można odczytać tylko pojedynczy wpis znając dokładny e-mail
