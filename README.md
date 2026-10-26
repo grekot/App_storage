@@ -122,6 +122,7 @@ na `C:\TMP\jtmp`.
    | Zakupy | `grekot/T_rex_3` | `zakupy-v` | `zakupy` | `pl.grekot.zakupy` |
    | Powrót | `grekot/T_rex_3` | `powrot-v` | `powrot` | `pl.grekot.powrot` |
    | Na szczycie | `grekot/T_rex_3` | `naszczycie-v` | `naszczycie` | `pl.grekot.naszczycie` |
+   | Waga | `grekot/T_rex_3` | `waga-v` | `waga` | `pl.grekot.waga` |
 
 6. **Rodzina**: zakładka Zaproszenia → Nowy kod → „Kopiuj wiadomość” i wysłać.
 
