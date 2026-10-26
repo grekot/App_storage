@@ -2,10 +2,11 @@
   "name": "sklep-ci-publish",
   "private": true,
   "type": "module",
-  "description": "Po wydaniu: zapis wersji do Firestore (pole latest aplikacji) i powiadomienie FCM",
+  "description": "CI z kontem usługi Firebase: zapis wersji do Firestore + powiadomienie FCM po wydaniu, publikacja reguł Firestore",
   "scripts": {
     "publish": "node publish.mjs",
-    "test": "node --test publish.test.mjs"
+    "deploy-rules": "node deploy-rules.mjs",
+    "test": "node --test publish.test.mjs deploy-rules.test.mjs"
   },
   "dependencies": {
     "firebase-admin": "^14.5.0"
