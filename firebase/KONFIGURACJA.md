@@ -24,15 +24,18 @@ z istniejącej książki adresowej. Wszystko robisz w przeglądarce w
 
 ## 2. Reguły Firestore
 
-Firestore ma **jeden zestaw reguł** dla całej bazy. Plik [`firestore.rules`](firestore.rules)
-zawiera reguły Zakupów i Powrotu bez zmian oraz nowe bloki sklepu.
+Firestore ma **jeden zestaw reguł** dla całej bazy: plik [`firestore.rules`](firestore.rules)
+(Zakupy, Powrót, Na szczycie, Waga i sklep). To jedyne źródło reguł projektu.
 
-1. **Firestore Database → Reguły**.
-2. Usuń całą zawartość, wklej zawartość `firebase/firestore.rules` → **Opublikuj**.
+**Publikuje je CI** (`.github/workflows/ci.yml`, krok `deploy-rules`): po pushu na `main`, gdy testy
+na emulatorze przeszły, `tools/ci-publish/deploy-rules.mjs` porównuje plik z opublikowanymi regułami
+i publikuje go kontem usługi z sekretu `FIREBASE_SERVICE_ACCOUNT` (pkt 4). Gdy nic się nie zmieniło,
+nic nie robi. Jeśli z pliku zniknęłaby kolekcja, która jest w opublikowanych regułach (np. ktoś
+dopisał coś ręcznie w konsoli), krok kończy się błędem - świadomie usuwasz ją ręcznym uruchomieniem
+workflow CI z zaznaczonym „allow_removed”.
 
-Od tej chwili to jest jedyne źródło reguł projektu. Plik
-`T_rex_3/lista-zakupow/firebase/firestore.rules` warto zastąpić odnośnikiem do tego pliku,
-żeby przy następnej zmianie Zakupów nie opublikować starej wersji bez sklepu.
+Nowa aplikacja = dopisz jej blok `match` + testy w `firebase/test`, scal z `main`, wypchnij. Nic nie
+wklejasz w konsoli. (Awaryjnie, bez CI: **Firestore Database → Reguły** → wklej cały plik → **Opublikuj**.)
 
 Testy reguł na emulatorze (Node.js + Java 17, w Windows z krótką ścieżką TEMP):
 

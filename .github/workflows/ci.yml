@@ -1,11 +1,18 @@
 name: CI
 
 # Każdy push / PR: analiza i testy aplikacji sklepu, testy reguł Firestore na emulatorze
-# i testy skryptu publikacji wersji.
+# i testy skryptu publikacji wersji. Push na main (albo ręczne uruchomienie): po zielonych
+# testach reguł publikuje firebase/firestore.rules w projekcie Firebase.
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      allow_removed:
+        description: 'Zgoda na usunięcie kolekcji, których nie ma już w pliku reguł'
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -69,3 +76,26 @@ jobs:
       - name: Testy polecenia sklep (CLI)
         working-directory: tools/sklep-cli
         run: node --test lib.test.mjs
+
+  # Reguły Firestore: jeden zestaw dla całego projektu zakupy-8ec54 (Zakupy, Powrót, Na szczycie,
+  # Waga, sklep). Publikuje tylko main i tylko po przejściu testów na emulatorze; bez zmian = nic.
+  deploy-rules:
+    needs: [rules, ci-publish]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-rules
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: tools/ci-publish
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: node deploy-rules.mjs
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          ALLOW_REMOVED: ${{ inputs.allow_removed && 'true' || 'false' }}
