@@ -31,8 +31,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Zalogowana OSOBA: konto e-mail / Google, nie anonimowe. Klucz API jest w APK, więc konto anonimowe założy
+    // każdy; anonimowe mają tylko urządzenia HomeAutomation (Realtime Database) - w Firestore nie widzą niczego,
+    // także emails/{email} (sprawdzanie, czy e-mail ma konto). SmartTermostatOLED/docs/PRZEGLAD.md #6.
     function signedIn() {
-      return request.auth != null;
+      return request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous';
     }
 
     function isMember(listId) {

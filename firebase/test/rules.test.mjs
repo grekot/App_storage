@@ -29,8 +29,14 @@ const MEMBER = { uid: "member", email: "member@x.pl" };
 const NEW = { uid: "newbie", email: "newbie@x.pl" };
 const OUTSIDER = { uid: "outsider", email: "outsider@x.pl" };
 
+// Konto anonimowe (każdy założy je kluczem API z APK; mają je urządzenia HomeAutomation w RTDB).
+const ANON = { uid: "anon", anonymous: true };
+
 let env;
-const db = (u) => env.authenticatedContext(u.uid, { email: u.email }).firestore();
+const db = (u) =>
+  env
+    .authenticatedContext(u.uid, u.anonymous ? { firebase: { sign_in_provider: "anonymous" } } : { email: u.email })
+    .firestore();
 
 const inDays = (d) => Timestamp.fromMillis(Date.now() + d * 86400000);
 
@@ -340,5 +346,37 @@ describe("Waga (waga/{uid})", () => {
     await assertFails(setDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`), { ...weights, goal: "78" }));
     await assertFails(setDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`), { ...weights, v: "1" }));
     await assertSucceeds(setDoc(doc(db(MEMBER), `waga/${MEMBER.uid}`), { e: {}, v: 1 }));
+  });
+});
+
+describe("konto anonimowe (PRZEGLAD.md #6)", () => {
+  test("nie sprawdzi, czy e-mail ma konto, i nie zapisze swojego", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `emails/${MEMBER.email}`), { uid: MEMBER.uid, email: MEMBER.email });
+    });
+    await assertFails(getDoc(doc(db(ANON), `emails/${MEMBER.email}`)));
+    await assertFails(setDoc(doc(db(ANON), "emails/anon@x.pl"), { uid: ANON.uid, email: "anon@x.pl" }));
+    await assertSucceeds(getDoc(doc(db(NEW), `emails/${MEMBER.email}`)));
+  });
+
+  test("nie czyta zaproszeń i nie dołącza do grupy", async () => {
+    await assertFails(getDoc(doc(db(ANON), "invites/GOODCODE")));
+    await assertFails(
+      updateDoc(doc(db(ANON), "groups/g1"), {
+        members: arrayUnion(ANON.uid),
+        [`memberEmails.${ANON.uid}`]: "anon@x.pl",
+        lastInvite: "GOODCODE",
+      })
+    );
+  });
+
+  test("nie zakłada własnych dokumentów (listy, miejsca, korona, waga)", async () => {
+    await assertFails(setDoc(doc(db(ANON), "lists/la"), { name: "X", ownerId: ANON.uid, members: [ANON.uid] }));
+    await assertFails(
+      setDoc(doc(db(ANON), "places/pa"), { name: "Auto", lat: 50, lon: 20, ownerId: ANON.uid, members: [ANON.uid] })
+    );
+    await assertFails(setDoc(doc(db(ANON), `korona/${ANON.uid}`), { climbs: {}, v: 1 }));
+    await assertFails(setDoc(doc(db(ANON), `waga/${ANON.uid}`), { e: {}, v: 1 }));
+    await assertFails(getDoc(doc(db(ANON), "groups/g1")));
   });
 });
